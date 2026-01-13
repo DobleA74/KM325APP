@@ -44,3 +44,15 @@ input[type="time"] {
   margin-bottom: 10px;
   font-weight: bold;
 }
+.sospechoso {
+  background: #fff3cd; /* amarillo suave */
+}
+
+.sospechoso td.horas {
+  font-weight: bold;
+}
+
+button.invertir {
+  padding: 4px 10px;
+  cursor: pointer;
+}

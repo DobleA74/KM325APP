@@ -36,7 +36,7 @@ app.use(express.urlencoded({ extended: true }));
 ================================ */
 
 const upload = multer({
-  dest: "uploads/"
+  dest: "uploads/",
 });
 
 /* ===============================
@@ -55,13 +55,13 @@ function excelDateToJSDate(serial) {
 function agruparPorDia(fichadas) {
   const grupos = {};
 
-  fichadas.forEach(f => {
+  fichadas.forEach((f) => {
     const key = `${f.legajo}_${f.fecha}`;
     if (!grupos[key]) grupos[key] = [];
     grupos[key].push(f);
   });
 
-  return Object.values(grupos).map(registros => {
+  return Object.values(grupos).map((registros) => {
     registros.sort((a, b) => a.hora.localeCompare(b.hora));
 
     return {
@@ -71,7 +71,7 @@ function agruparPorDia(fichadas) {
       sucursal: registros[0].sucursal,
       fecha: excelDateToJSDate(registros[0].fecha),
       entrada: registros[0].hora,
-      salida: registros[registros.length - 1].hora
+      salida: registros[registros.length - 1].hora,
     };
   });
 }
@@ -96,14 +96,14 @@ app.post("/importar", upload.single("archivo"), (req, res) => {
 
     // Normalizar fichadas válidas
     const fichadas = filas
-      .filter(f => /^\d+$/.test(f["Persona"]))
-      .map(f => ({
+      .filter((f) => /^\d+$/.test(f["Persona"]))
+      .map((f) => ({
         fecha: f["Fecha / hora"],
         hora: f["Evento"],
         legajo: f["Persona"],
         nombre: f["DEPARTAMENTO"],
         sector: f["EmpresaVisita"],
-        sucursal: f["__EMPTY"]
+        sucursal: f["__EMPTY"],
       }));
 
     // Agrupar por día
@@ -113,8 +113,11 @@ app.post("/importar", upload.single("archivo"), (req, res) => {
     fs.unlinkSync(req.file.path);
 
     // Enviar tabla HTML editable
-    res.send(renderTabla(resumen));
-
+    res.json({
+      registros_originales: fichadas.length,
+      registros_procesados: resumen.length,
+      ejemplo: resumen,
+    });
   } catch (error) {
     console.error(error);
     res.status(500).send("Error procesando el archivo");
@@ -124,108 +127,6 @@ app.post("/importar", upload.single("archivo"), (req, res) => {
 /* ===============================
    HTML TABLA EDITABLE
 ================================ */
-
-function renderTabla(registros) {
-
-  const filasHTML = registros.map((r, i) => `
-    <tr>
-      <td>${i + 1}</td>
-      <td>${r.legajo}</td>
-      <td>${r.nombre}</td>
-      <td>${r.sector}</td>
-      <td>${r.fecha}</td>
-      <td contenteditable="true" class="entrada">${r.entrada}</td>
-      <td contenteditable="true" class="salida">${r.salida}</td>
-      <td contenteditable="true" class="total">00:00</td>
-    </tr>
-  `).join("");
-
-  return `
-<!DOCTYPE html>
-<html lang="es">
-<head>
-  <meta charset="UTF-8">
-  <title>Control de Asistencias</title>
-  <style>
-    body { font-family: Arial; padding: 20px; }
-    table { width: 100%; border-collapse: collapse; }
-    th, td { border: 1px solid #ccc; padding: 6px; text-align: center; }
-    th { background: #eee; }
-    td[contenteditable] { background: #fff3cd; }
-    .total { background: #d1ecf1; font-weight: bold; }
-    button { margin-top: 15px; padding: 10px 20px; }
-  </style>
-</head>
-<body>
-
-<h2>Tabla preliminar de fichadas</h2>
-<p>Editá entradas y salidas. El total se calcula automáticamente.</p>
-
-<table id="tabla">
-  <thead>
-    <tr>
-      <th>#</th>
-      <th>Legajo</th>
-      <th>Nombre</th>
-      <th>Sector</th>
-      <th>Fecha</th>
-      <th>Entrada</th>
-      <th>Salida</th>
-      <th>Horas trabajadas</th>
-    </tr>
-  </thead>
-  <tbody>
-    ${filasHTML}
-  </tbody>
-</table>
-
-<button onclick="alert('Próximo paso: guardar definitivo')">
-  Confirmar
-</button>
-
-<script>
-function calcularHoras(entrada, salida) {
-  if (!entrada || !salida) return "00:00";
-
-  const [eh, em] = entrada.split(":").map(Number);
-  const [sh, sm] = salida.split(":").map(Number);
-
-  if (isNaN(eh) || isNaN(sh)) return "00:00";
-
-  let inicio = eh * 60 + em;
-  let fin = sh * 60 + sm;
-
-  if (fin < inicio) fin += 24 * 60; // cruza medianoche
-
-  const diff = fin - inicio;
-  const horas = Math.floor(diff / 60);
-  const minutos = diff % 60;
-
-  return \`\${String(horas).padStart(2, "0")}:\${String(minutos).padStart(2, "0")}\`;
-}
-
-// Recalcular cuando se edita
-document.querySelectorAll("#tabla tbody tr").forEach(row => {
-  const entrada = row.querySelector(".entrada");
-  const salida = row.querySelector(".salida");
-  const total = row.querySelector(".total");
-
-  function actualizar() {
-    total.innerText = calcularHoras(entrada.innerText, salida.innerText);
-  }
-
-  entrada.addEventListener("input", actualizar);
-  salida.addEventListener("input", actualizar);
-
-  // cálculo inicial
-  actualizar();
-});
-</script>
-
-</body>
-</html>
-`;
-}
 
 
 /* ===============================

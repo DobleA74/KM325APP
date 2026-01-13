@@ -1,36 +1,39 @@
 <!DOCTYPE html>
 <html lang="es">
-<head>
-  <meta charset="UTF-8" />
-  <title>KM325 RRHH – Importar Asistencias</title>
-  <link rel="stylesheet" href="style.css" />
-</head>
-<body>
+  <head>
+    <meta charset="UTF-8" />
+    <title>KM325 RRHH – Importar Asistencias</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <h2>Importar archivo Excel</h2>
 
-  <h2>Importar archivo Excel</h2>
+    <form id="form-excel">
+      <input type="file" id="archivo" accept=".xlsx" required />
+      <button type="submit">Subir archivo</button>
+    </form>
 
-  <form id="form-excel">
-    <input type="file" id="archivo" accept=".xlsx" required />
-    <button type="submit">Subir archivo</button>
-  </form>
+    <div id="resumen"></div>
 
-  <div id="resumen"></div>
+    <table>
+      <thead>
+        <tr>
+          <th>Legajo</th>
+          <th>Nombre</th>
+          <th>Sector</th>
+          <th>Puesto</th>
+          <th>Fecha</th>
+          <th>Entrada</th>
+          <th>Salida</th>
+          <th>Horas</th>
+          <th>Fecha salida</th>
+          <th>Nocturnas</th>
+          <th>Acción</th>
+        </tr>
+      </thead>
+      <tbody id="tabla-body"></tbody>
+    </table>
 
-  <table>
-    <thead>
-      <tr>
-        <th>Legajo</th>
-        <th>Nombre</th>
-        <th>Sector</th>
-        <th>Fecha</th>
-        <th>Entrada</th>
-        <th>Salida</th>
-        <th>Horas</th>
-      </tr>
-    </thead>
-    <tbody id="tabla-body"></tbody>
-  </table>
-
-  <script src="script.js"></script>
-</body>
+    <script src="script.js"></script>
+  </body>
 </html>
