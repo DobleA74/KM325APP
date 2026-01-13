@@ -1,57 +1,93 @@
 /* ===============================
    IMPORTS
 ================================ */
-
-// Framework para servidor HTTP
 const express = require("express");
-
-// Middleware para subir archivos (input type="file")
 const multer = require("multer");
-
-// Librería para leer archivos Excel
 const XLSX = require("xlsx");
-
-// Manejo de rutas de archivos
 const path = require("path");
-
-// Manejo de sistema de archivos
 const fs = require("fs");
+const sqlite3 = require("sqlite3").verbose();
 
 /* ===============================
    CONFIGURACIÓN INICIAL
 ================================ */
-
 const app = express();
 const PORT = 3001;
 
-// Permite servir archivos estáticos (HTML, CSS, JS)
+/* ===============================
+   MIDDLEWARES
+================================ */
 app.use(express.static("public"));
-
-// Permite leer datos de formularios
 app.use(express.urlencoded({ extended: true }));
+app.use(express.json());
+
+// evitar error favicon
+app.get("/favicon.ico", (req, res) => res.status(204).end());
+
+// carpeta uploads
+if (!fs.existsSync("uploads")) fs.mkdirSync("uploads");
 
 /* ===============================
-   CONFIG MULTER
-   (archivos temporales)
+   SQLITE
 ================================ */
+const db = new sqlite3.Database("km325.db");
 
-const upload = multer({
-  dest: "uploads/",
+db.serialize(() => {
+  db.run(`
+    CREATE TABLE IF NOT EXISTS empleados (
+      legajo TEXT PRIMARY KEY,
+      nombre TEXT,
+      sector TEXT,
+      puesto TEXT,
+      activo INTEGER DEFAULT 1
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS asistencias (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      legajo TEXT,
+      nombre TEXT,
+      sector TEXT,
+      puesto TEXT,
+      fecha_entrada TEXT,
+      fecha_salida TEXT,
+      entrada TEXT,
+      salida TEXT,
+      horas REAL,
+      nocturnas REAL,
+      creado_en TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS jornadas_abiertas (
+      legajo TEXT PRIMARY KEY,
+      nombre TEXT,
+      sector TEXT,
+      puesto TEXT,
+      fecha_entrada TEXT,
+      entrada TEXT,
+      creado_en TEXT DEFAULT (datetime('now'))
+    )
+  `);
 });
+
+/* ===============================
+   MULTER
+================================ */
+const upload = multer({ dest: "uploads/" });
 
 /* ===============================
    UTILIDADES
 ================================ */
-
-// Convierte fecha Excel (número) a YYYY-MM-DD
-function excelDateToJSDate(serial) {
+function excelDateToISO(serial) {
   const utc_days = Math.floor(serial - 25569);
   const utc_value = utc_days * 86400;
   const date_info = new Date(utc_value * 1000);
-  return date_info.toISOString().split("T")[0];
+  return date_info.toISOString().slice(0, 10);
 }
 
-// Agrupa fichadas por legajo + fecha
 function agruparPorDia(fichadas) {
   const grupos = {};
 
@@ -61,40 +97,33 @@ function agruparPorDia(fichadas) {
     grupos[key].push(f);
   });
 
-  return Object.values(grupos).map((registros) => {
-    registros.sort((a, b) => a.hora.localeCompare(b.hora));
-
+  return Object.values(grupos).map((reg) => {
+    reg.sort((a, b) => a.hora.localeCompare(b.hora));
     return {
-      legajo: registros[0].legajo,
-      nombre: registros[0].nombre,
-      sector: registros[0].sector,
-      sucursal: registros[0].sucursal,
-      fecha: excelDateToJSDate(registros[0].fecha),
-      entrada: registros[0].hora,
-      salida: registros[registros.length - 1].hora,
+      legajo: reg[0].legajo,
+      nombre: reg[0].nombre,
+      sector: reg[0].sector,
+      fecha: excelDateToISO(reg[0].fecha),
+      entrada: reg[0].hora,
+      salida: reg[reg.length - 1].hora,
     };
   });
 }
 
-/* ===============================
-   ENDPOINT IMPORTAR EXCEL
-================================ */
+const esTarde = (h) => h >= "18:00";
+const esTemprano = (h) => h <= "12:00";
 
+/* ===============================
+   IMPORTAR EXCEL
+================================ */
 app.post("/importar", upload.single("archivo"), (req, res) => {
   try {
-    if (!req.file) {
-      return res.send("No se recibió ningún archivo");
-    }
+    if (!req.file) return res.status(400).json({ error: "Sin archivo" });
 
-    // Leer archivo Excel
-    const workbook = XLSX.readFile(req.file.path);
-    const sheetName = workbook.SheetNames[0];
-    const sheet = workbook.Sheets[sheetName];
-
-    // Convertir a JSON
+    const wb = XLSX.readFile(req.file.path);
+    const sheet = wb.Sheets[wb.SheetNames[0]];
     const filas = XLSX.utils.sheet_to_json(sheet, { defval: "" });
 
-    // Normalizar fichadas válidas
     const fichadas = filas
       .filter((f) => /^\d+$/.test(f["Persona"]))
       .map((f) => ({
@@ -103,44 +132,159 @@ app.post("/importar", upload.single("archivo"), (req, res) => {
         legajo: f["Persona"],
         nombre: f["DEPARTAMENTO"],
         sector: f["EmpresaVisita"],
-        sucursal: f["__EMPTY"],
       }));
 
-    // Agrupar por día
     const resumen = agruparPorDia(fichadas);
 
-    // Borrar archivo temporal
-    fs.unlinkSync(req.file.path);
+    db.all("SELECT legajo, puesto FROM empleados", [], (err, empleados) => {
+      const mapPuesto = {};
+      (empleados || []).forEach((e) => (mapPuesto[e.legajo] = e.puesto));
 
-    // Enviar tabla HTML editable
-    res.json({
-      registros_originales: fichadas.length,
-      registros_procesados: resumen.length,
-      ejemplo: resumen,
+      const registros = resumen.map((r) => ({
+        ...r,
+        puesto: mapPuesto[r.legajo] || "",
+        abierta: r.entrada === r.salida && esTarde(r.entrada),
+      }));
+
+      // cerrar jornadas abiertas con fichada temprana
+      registros.forEach((r) => {
+        if (r.entrada === r.salida && esTemprano(r.entrada)) {
+          db.get(
+            "SELECT * FROM jornadas_abiertas WHERE legajo=?",
+            [r.legajo],
+            (err, abierta) => {
+              if (!abierta) return;
+
+              db.run(
+                `INSERT INTO asistencias
+                 (legajo,nombre,sector,puesto,fecha_entrada,fecha_salida,entrada,salida,horas,nocturnas)
+                 VALUES (?,?,?,?,?,?,?,?,?,?)`,
+                [
+                  abierta.legajo,
+                  abierta.nombre,
+                  abierta.sector,
+                  abierta.puesto,
+                  abierta.fecha_entrada,
+                  r.fecha,
+                  abierta.entrada,
+                  r.entrada,
+                  0,
+                  0,
+                ],
+                () => {
+                  db.run("DELETE FROM jornadas_abiertas WHERE legajo=?", [
+                    r.legajo,
+                  ]);
+                }
+              );
+            }
+          );
+        }
+      });
+
+      // abrir nuevas jornadas
+      registros.forEach((r) => {
+        if (r.abierta) {
+          db.run(
+            `INSERT OR REPLACE INTO jornadas_abiertas
+             (legajo,nombre,sector,puesto,fecha_entrada,entrada)
+             VALUES (?,?,?,?,?,?)`,
+            [r.legajo, r.nombre, r.sector, r.puesto, r.fecha, r.entrada]
+          );
+        }
+      });
+
+      try {
+        fs.unlinkSync(req.file.path);
+      } catch {}
+
+      res.json({
+        registros_originales: fichadas.length,
+        registros_procesados: registros.length,
+        ejemplo: registros,
+      });
     });
-  } catch (error) {
-    console.error(error);
-    res.status(500).send("Error procesando el archivo");
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "Error importando" });
   }
 });
 
 /* ===============================
-   HTML TABLA EDITABLE
+   CONFIRMAR ASISTENCIAS
 ================================ */
+app.post("/api/asistencias/confirmar", (req, res) => {
+  const { registros } = req.body;
+  if (!Array.isArray(registros))
+    return res.status(400).json({ error: "Formato inválido" });
 
+  const stmt = db.prepare(`
+    INSERT INTO asistencias
+    (legajo,nombre,sector,puesto,fecha_entrada,fecha_salida,entrada,salida,horas,nocturnas)
+    VALUES (?,?,?,?,?,?,?,?,?,?)
+  `);
+
+  registros.forEach((r) => {
+    if (!r.abierta) {
+      stmt.run([
+        r.legajo,
+        r.nombre,
+        r.sector,
+        r.puesto,
+        r.fecha,
+        r.fecha_salida,
+        r.entrada,
+        r.salida,
+        Number(r.horas || 0),
+        Number(r.nocturnas || 0),
+      ]);
+    }
+  });
+
+  stmt.finalize();
+  res.json({ ok: true, guardados: registros.length });
+});
+
+/* ===============================
+   ABM EMPLEADOS (API)
+================================ */
+app.delete("/api/empleados/:legajo", (req, res) => {
+  const legajo = req.params.legajo;
+
+  db.run("DELETE FROM empleados WHERE legajo=?", [legajo], (err) => {
+    if (err) return res.status(500).json({ error: "DB error" });
+    res.json({ ok: true });
+  });
+});
+
+app.get("/api/empleados", (req, res) => {
+  db.all("SELECT * FROM empleados ORDER BY legajo", [], (e, rows) => {
+    if (e) return res.status(500).json({ error: "DB error" });
+    res.json(rows);
+  });
+});
+
+app.post("/api/empleados", (req, res) => {
+  const { legajo, nombre, sector, puesto } = req.body;
+  if (!legajo) return res.status(400).json({ error: "Falta legajo" });
+
+  db.run(
+    "INSERT OR REPLACE INTO empleados VALUES (?,?,?,?,1)",
+    [legajo, nombre || "", sector || "", puesto || ""],
+    () => res.json({ ok: true })
+  );
+});
 
 /* ===============================
    RUTA PRINCIPAL
 ================================ */
-
 app.get("/", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "index.html"));
 });
 
 /* ===============================
-   INICIO DEL SERVIDOR
+   START
 ================================ */
-
 app.listen(PORT, () => {
   console.log(`✅ KM325 RRHH - Servidor OK en http://localhost:${PORT}`);
 });
