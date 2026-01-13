@@ -1,81 +1,89 @@
 <!DOCTYPE html>
 <html lang="es">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>KM325 RRHH – Importar Asistencias</title>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>KM325 RRHH – Importar Asistencias</title>
 
-  <!-- Favicon (evita el 404 de favicon.ico) -->
-  <link rel="icon" type="image/png" href="favicon.png">
+    <!-- Favicon (evita el 404 de favicon.ico) -->
+    <link rel="icon" type="image/png" href="favicon.png" />
 
+    <link rel="stylesheet" href="style.css" />
+  </head>
 
-  <link rel="stylesheet" href="style.css" />
-</head>
-
-<body>
-  <!-- TOP BAR -->
-  <header class="topbar">
-    <div class="brand">
-      <img class="brand__logo" src="img/logo-gulf.png.png" alt="Gulf" />
-      <div class="brand__text">
-        <div class="brand__title">KM325</div>
-        <div class="brand__subtitle">Gestión RRHH</div>
-      </div>
-    </div>
-
-    <nav class="nav">
-      <!-- Por ahora un único item (luego lo expandimos a “Gestión de personal” con sub-secciones) -->
-      <a class="nav__link nav__link--active" href="/">Asistencias</a>
-      <a class="nav__link" href="/empleados.html">ABM Empleados</a>
-    </nav>
-  </header>
-
-  <main class="container">
-    <section class="card">
-      <div class="card__header">
-        <h1 class="h1">Importar archivo Excel</h1>
-        <p class="muted">
-          Subí el .xlsx de fichadas. Luego podés ajustar entradas/salidas y confirmar.
-        </p>
+  <body>
+    <!-- TOP BAR -->
+    <header class="topbar">
+      <div class="brand">
+        <img class="brand__logo" src="img/logo-gulf.png.png" alt="Gulf" />
+        <div class="brand__text">
+          <div class="brand__title">KM325</div>
+          <div class="brand__subtitle">Gestión RRHH</div>
+        </div>
       </div>
 
-      <form id="form-excel" class="form">
-        <input class="input" type="file" id="archivo" accept=".xlsx" required />
-        <button class="btn btn--primary" type="submit">Subir archivo</button>
-      </form>
+      <nav class="nav">
+        <a class="nav__link nav__link--active" href="/">Asistencias</a>
+        <a class="nav__link" href="/empleados.html">ABM Empleados</a>
+        <a class="nav__link" href="/gestion-asistencias.html"
+          >Gestión Asistencias</a
+        >
+      </nav>
+    </header>
 
-      <div id="resumen" class="resumen"></div>
+    <main class="container">
+      <section class="card">
+        <div class="card__header">
+          <h1 class="h1">Importar archivo Excel</h1>
+          <p class="muted">
+            Subí el .xlsx de fichadas. Luego podés ajustar entradas/salidas y
+            confirmar.
+          </p>
+        </div>
 
-      <div class="table-wrap">
-        <table class="table">
-          <thead>
-            <tr>
-              <th>Legajo</th>
-              <th>Nombre</th>
-              <th>Sector</th>
-              <th>Puesto</th>
-              <th>Fecha</th>
-              <th>Entrada</th>
-              <th>Salida</th>
-              <th>Horas</th>
-              <th>Fecha salida</th>
-              <th>Nocturnas (21-06)</th>
-              <th>Acción</th>
-            </tr>
-          </thead>
-          <tbody id="tabla-body"></tbody>
-        </table>
-      </div>
+        <form id="form-excel" class="form">
+          <input
+            class="input"
+            type="file"
+            id="archivo"
+            accept=".xlsx"
+            required
+          />
+          <button class="btn btn--primary" type="submit">Subir archivo</button>
+        </form>
 
-      <div class="actions">
-        <button id="btn-guardar" class="btn btn--ghost" type="button">
-          Confirmar y guardar
-        </button>
-        <span id="estado-guardado" class="status"></span>
-      </div>
-    </section>
-  </main>
+        <div id="resumen" class="resumen"></div>
 
-  <script src="script.js"></script>
-</body>
+        <div class="table-wrap">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Legajo</th>
+                <th>Nombre</th>
+                <th>Sector</th>
+                <th>Puesto</th>
+                <th>Fecha</th>
+                <th>Entrada</th>
+                <th>Salida</th>
+                <th>Horas</th>
+                <th>Fecha salida</th>
+                <th>Nocturnas (21-06)</th>
+                <th>Acción</th>
+              </tr>
+            </thead>
+            <tbody id="tabla-body"></tbody>
+          </table>
+        </div>
+
+        <div class="actions">
+          <button id="btn-guardar" class="btn btn--ghost" type="button">
+            Confirmar y guardar
+          </button>
+          <span id="estado-guardado" class="status"></span>
+        </div>
+      </section>
+    </main>
+
+    <script src="script.js"></script>
+  </body>
 </html>

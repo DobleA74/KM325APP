@@ -30,7 +30,8 @@ if (!fs.existsSync("uploads")) fs.mkdirSync("uploads");
 /* ===============================
    SQLITE
 ================================ */
-const db = new sqlite3.Database("km325.db");
+const db = new sqlite3.Database(path.join(__dirname, "km325.db"));
+
 
 db.serialize(() => {
   db.run(`
@@ -248,6 +249,8 @@ app.post("/api/asistencias/confirmar", (req, res) => {
 /* ===============================
    ABM EMPLEADOS (API)
 ================================ */
+
+
 app.delete("/api/empleados/:legajo", (req, res) => {
   const legajo = req.params.legajo;
 
@@ -273,6 +276,76 @@ app.post("/api/empleados", (req, res) => {
     [legajo, nombre || "", sector || "", puesto || ""],
     () => res.json({ ok: true })
   );
+});
+/* ===============================
+   API: CONSULTAR ASISTENCIAS
+   GET /api/asistencias?desde=YYYY-MM-DD&hasta=YYYY-MM-DD&legajo=&puesto=&sector=
+================================ */
+app.get("/api/asistencias", (req, res) => {
+  const { desde, hasta, legajo, puesto, sector } = req.query;
+
+  let where = [];
+  let params = [];
+
+  // filtro por rango de fechas (usamos fecha_entrada)
+  if (desde) {
+    where.push("fecha_entrada >= ?");
+    params.push(desde);
+  }
+  if (hasta) {
+    where.push("fecha_entrada <= ?");
+    params.push(hasta);
+  }
+
+  if (legajo) {
+    where.push("legajo = ?");
+    params.push(legajo);
+  }
+  if (puesto) {
+    where.push("puesto = ?");
+    params.push(puesto);
+  }
+  if (sector) {
+    where.push("sector = ?");
+    params.push(sector);
+  }
+
+  const whereSQL = where.length ? `WHERE ${where.join(" AND ")}` : "";
+
+  const sql = `
+    SELECT id, legajo, nombre, sector, puesto,
+           fecha_entrada, fecha_salida, entrada, salida,
+           horas, nocturnas
+    FROM asistencias
+    ${whereSQL}
+    ORDER BY fecha_entrada DESC, entrada DESC, id DESC
+    LIMIT 500
+  `;
+
+  db.all(sql, params, (err, rows) => {
+    if (err) {
+      console.error(err);
+      return res.status(500).json({ error: "DB error" });
+    }
+    res.json({ rows: rows || [] });
+  });
+});
+
+/* ===============================
+   API: ELIMINAR ASISTENCIA
+   DELETE /api/asistencias/:id
+================================ */
+app.delete("/api/asistencias/:id", (req, res) => {
+  const id = Number(req.params.id);
+  if (!id) return res.status(400).json({ error: "ID inválido" });
+
+  db.run("DELETE FROM asistencias WHERE id = ?", [id], (err) => {
+    if (err) {
+      console.error(err);
+      return res.status(500).json({ error: "DB error" });
+    }
+    res.json({ ok: true });
+  });
 });
 
 /* ===============================

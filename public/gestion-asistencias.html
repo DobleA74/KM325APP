@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>KM325 RRHH – Gestión de Asistencias</title>
+
+  <link rel="icon" type="image/png" href="favicon.png" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <img class="brand__logo" src="img/logo-gulf.png" alt="Gulf" />
+      <div>
+        <div class="brand__title">KM325</div>
+        <div class="brand__subtitle">Gestión RRHH</div>
+      </div>
+    </div>
+
+    <nav class="nav">
+      <a class="nav__link" href="/">Asistencias</a>
+      <a class="nav__link" href="/empleados.html">ABM Empleados</a>
+      <a class="nav__link nav__link--active" href="/gestion-asistencias.html">Gestión Asistencias</a>
+    </nav>
+  </header>
+
+  <main class="container">
+    <section class="card">
+      <h1 class="h1">Gestión de asistencias</h1>
+      <p class="muted">Histórico guardado en base. Filtrá y revisá totales.</p>
+
+      <div class="form" style="align-items:flex-end;">
+        <div>
+          <label class="muted">Desde</label><br>
+          <input class="input" type="date" id="desde" />
+        </div>
+
+        <div>
+          <label class="muted">Hasta</label><br>
+          <input class="input" type="date" id="hasta" />
+        </div>
+
+        <div>
+          <label class="muted">Legajo</label><br>
+          <input class="input" id="legajo" placeholder="Ej: 00000001" value=""
+                 autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"/>
+        </div>
+
+        <div>
+          <label class="muted">Puesto</label><br>
+          <select class="input" id="puesto">
+            <option value="">(Todos)</option>
+            <option value="Playero">Playero</option>
+            <option value="Auxiliar de playa">Auxiliar de playa</option>
+            <option value="Cajero shop">Cajero shop</option>
+          </select>
+        </div>
+
+        <div>
+          <label class="muted">Sector</label><br>
+          <select class="input" id="sector">
+            <option value="">(Todos)</option>
+            <option value="PLAYA">PLAYA</option>
+            <option value="MINI">MINI</option>
+          </select>
+        </div>
+
+        <button class="btn btn--primary" id="btn-buscar" type="button">Buscar</button>
+        <button class="btn btn--ghost" id="btn-limpiar" type="button">Limpiar</button>
+
+        <span id="info" class="status"></span>
+      </div>
+
+      <div class="actions" style="justify-content:space-between; flex-wrap:wrap;">
+        <div class="muted" id="totales"></div>
+        <div class="muted">Tip: podés borrar un registro si fue guardado por error.</div>
+      </div>
+
+      <div class="table-wrap" style="margin-top:10px;">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Fecha entrada</th>
+              <th>Fecha salida</th>
+              <th>Legajo</th>
+              <th>Nombre</th>
+              <th>Sector</th>
+              <th>Puesto</th>
+              <th>Entrada</th>
+              <th>Salida</th>
+              <th>Horas</th>
+              <th>Nocturnas</th>
+              <th>Acción</th>
+            </tr>
+          </thead>
+          <tbody id="tbody-asist"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <!-- IMPORTANTE: el script va al final -->
+  <script src="gestion-asistencias.js"></script>
+</body>
+</html>
