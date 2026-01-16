@@ -1,108 +1,139 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="es">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>KM325 RRHH – Gestión de Asistencias</title>
-
-  <link rel="icon" type="image/png" href="favicon.png" />
-  <link rel="stylesheet" href="style.css" />
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>KM325 RRHH – Gestión Asistencias</title>
+  <link rel="stylesheet" href="app.css" />
+  <link rel="icon" href="favicon.png" />
 </head>
-
 <body>
   <header class="topbar">
     <div class="brand">
-      <img class="brand__logo" src="img/logo-gulf.png" alt="Gulf" />
-      <div>
-        <div class="brand__title">KM325</div>
-        <div class="brand__subtitle">Gestión RRHH</div>
+      <img src="img/logo-gulf.png" alt="Logo" onerror="this.style.display='none'">
+      <div class="title">
+        <strong>KM325</strong>
+        <span>Gestión RRHH</span>
       </div>
     </div>
-
     <nav class="nav">
-      <a class="nav__link" href="/">Asistencias</a>
-      <a class="nav__link" href="/empleados.html">ABM Empleados</a>
-      <a class="nav__link nav__link--active" href="/gestion-asistencias.html">Gestión Asistencias</a>
+      <a href="/index.html">Asistencias</a>
+      <a href="/abm-empleados.html">ABM Empleados</a>
+      <a href="/jornadas-abiertas.html">Jornadas Abiertas</a>
+      <a class="active" href="/gestion-asistencias.html">Gestión Asistencias</a>
     </nav>
   </header>
 
   <main class="container">
     <section class="card">
-      <h1 class="h1">Gestión de asistencias</h1>
-      <p class="muted">Histórico guardado en base. Filtrá y revisá totales.</p>
+      <h1>Gestión de asistencias</h1>
+      <p>Histórico guardado en base. Filtrá, ordená, editá, exportá y eliminá.</p>
 
-      <div class="form" style="align-items:flex-end;">
-        <div>
-          <label class="muted">Desde</label><br>
-          <input class="input" type="date" id="desde" />
+      <div class="row">
+        <div class="field">
+          <label>Desde</label>
+          <input id="desde" type="date" />
         </div>
-
-        <div>
-          <label class="muted">Hasta</label><br>
-          <input class="input" type="date" id="hasta" />
+        <div class="field">
+          <label>Hasta</label>
+          <input id="hasta" type="date" />
         </div>
-
-        <div>
-          <label class="muted">Legajo</label><br>
-          <input class="input" id="legajo" placeholder="Ej: 00000001" value=""
-                 autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"/>
+        <div class="field">
+          <label>Legajo</label>
+          <input id="legajo" placeholder="Ej: 00000001" />
         </div>
-
-        <div>
-          <label class="muted">Puesto</label><br>
-          <select class="input" id="puesto">
+        <div class="field">
+          <label>Puesto</label>
+          <select id="puesto">
             <option value="">(Todos)</option>
-            <option value="Playero">Playero</option>
-            <option value="Auxiliar de playa">Auxiliar de playa</option>
-            <option value="Cajero shop">Cajero shop</option>
           </select>
         </div>
-
-        <div>
-          <label class="muted">Sector</label><br>
-          <select class="input" id="sector">
+        <div class="field">
+          <label>Sector</label>
+          <select id="sector">
             <option value="">(Todos)</option>
             <option value="PLAYA">PLAYA</option>
             <option value="MINI">MINI</option>
+            <option value="ADMINISTRACIÓN">ADMINISTRACIÓN</option>
           </select>
         </div>
 
-        <button class="btn btn--primary" id="btn-buscar" type="button">Buscar</button>
-        <button class="btn btn--ghost" id="btn-limpiar" type="button">Limpiar</button>
-
-        <span id="info" class="status"></span>
+        <button class="btn primary" id="btn-buscar">Buscar</button>
+        <button class="btn" id="btn-limpiar">Limpiar</button>
+        <button class="btn ghost" id="btn-exportar">Exportar CSV</button>
       </div>
 
-      <div class="actions" style="justify-content:space-between; flex-wrap:wrap;">
-        <div class="muted" id="totales"></div>
-        <div class="muted">Tip: podés borrar un registro si fue guardado por error.</div>
-      </div>
+      <div class="notice" id="status">Listo.</div>
 
-      <div class="table-wrap" style="margin-top:10px;">
-        <table class="table">
+      <hr class="sep" />
+
+      <div class="table-wrap">
+        <table id="tabla">
           <thead>
-            <tr>
-              <th>ID</th>
-              <th>Fecha entrada</th>
-              <th>Fecha salida</th>
-              <th>Legajo</th>
-              <th>Nombre</th>
-              <th>Sector</th>
-              <th>Puesto</th>
-              <th>Entrada</th>
-              <th>Salida</th>
-              <th>Horas</th>
-              <th>Nocturnas</th>
+            <tr class="thead-blue">
+              <th class="sortable" data-order="id">ID</th>
+              <th class="sortable" data-order="fecha_entrada">Fecha entrada</th>
+              <th class="sortable" data-order="fecha_salida">Fecha salida</th>
+              <th class="sortable" data-order="legajo">Legajo</th>
+              <th class="sortable" data-order="nombre">Nombre</th>
+              <th class="sortable" data-order="sector">Sector</th>
+              <th class="sortable" data-order="puesto">Puesto</th>
+              <th class="sortable" data-order="entrada">Entrada</th>
+              <th class="sortable" data-order="salida">Salida</th>
+              <th class="sortable" data-order="horas">Horas</th>
+              <th class="sortable" data-order="nocturnas">Nocturnas</th>
               <th>Acción</th>
             </tr>
           </thead>
-          <tbody id="tbody-asist"></tbody>
+          <tbody id="rows"></tbody>
         </table>
       </div>
+
+      <p class="small" style="margin-top:10px">
+        Tip: tocá el encabezado azul para ordenar. Editar recalcula horas y nocturnas.
+      </p>
     </section>
   </main>
 
-  <!-- IMPORTANTE: el script va al final -->
-  <script src="gestion-asistencias.js"></script>
+  <!-- modal edición -->
+  <div class="modal" id="modal">
+    <div class="box">
+      <h2>Editar asistencia</h2>
+
+      <div class="row">
+        <div class="field">
+          <label>Fecha entrada</label>
+          <input id="m_fecha_entrada" type="date" />
+        </div>
+        <div class="field">
+          <label>Entrada</label>
+          <input id="m_entrada" type="time" />
+        </div>
+        <div class="field">
+          <label>Fecha salida</label>
+          <input id="m_fecha_salida" type="date" />
+        </div>
+        <div class="field">
+          <label>Salida</label>
+          <input id="m_salida" type="time" />
+        </div>
+        <div class="field" style="min-width:240px">
+          <label>Puesto</label>
+          <select id="m_puesto">
+            <option value="">-- Seleccionar --</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="footer">
+        <button class="btn" id="m_cancelar">Cancelar</button>
+        <button class="btn primary" id="m_guardar">Guardar cambios</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="sortable.js"></script>
+<script src="gestion.js"></script>
+
 </body>
 </html>

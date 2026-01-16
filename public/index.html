@@ -1,89 +1,86 @@
 <!DOCTYPE html>
 <html lang="es">
   <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>KM325 RRHH – Importar Asistencias</title>
-
-    <!-- Favicon (evita el 404 de favicon.ico) -->
-    <link rel="icon" type="image/png" href="favicon.png" />
-
-    <link rel="stylesheet" href="style.css" />
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>KM325 RRHH – Asistencias</title>
+    <link rel="stylesheet" href="app.css" />
+    <link rel="icon" href="favicon.png" />
   </head>
-
   <body>
-    <!-- TOP BAR -->
     <header class="topbar">
       <div class="brand">
-        <img class="brand__logo" src="img/logo-gulf.png.png" alt="Gulf" />
-        <div class="brand__text">
-          <div class="brand__title">KM325</div>
-          <div class="brand__subtitle">Gestión RRHH</div>
+        <img
+          src="img/logo-gulf.png"
+          alt="Logo"
+          onerror="this.style.display='none'"
+        />
+        <div class="title">
+          <strong>KM325</strong>
+          <span>Gestión RRHH</span>
         </div>
       </div>
-
       <nav class="nav">
-        <a class="nav__link nav__link--active" href="/">Asistencias</a>
-        <a class="nav__link" href="/empleados.html">ABM Empleados</a>
-        <a class="nav__link" href="/gestion-asistencias.html"
-          >Gestión Asistencias</a
-        >
+        <a class="active" href="/index.html">Asistencias</a>
+        <a href="/abm-empleados.html">ABM Empleados</a>
+        <a href="/jornadas-abiertas.html">Jornadas Abiertas</a>
+        <a href="/gestion-asistencias.html">Gestión Asistencias</a>
       </nav>
     </header>
 
     <main class="container">
       <section class="card">
-        <div class="card__header">
-          <h1 class="h1">Importar archivo Excel</h1>
-          <p class="muted">
-            Subí el .xlsx de fichadas. Luego podés ajustar entradas/salidas y
-            confirmar.
-          </p>
-        </div>
+        <h1>Importar archivo Excel</h1>
+        <p>
+          Subí el .xlsx de fichadas. Ajustá entradas/salidas y confirmá para
+          guardar (sin duplicados).
+        </p>
 
-        <form id="form-excel" class="form">
-          <input
-            class="input"
-            type="file"
-            id="archivo"
-            accept=".xlsx"
-            required
-          />
-          <button class="btn btn--primary" type="submit">Subir archivo</button>
+        <form id="form-excel" class="row">
+          <div class="field">
+            <label>Archivo</label>
+            <input type="file" id="archivo" accept=".xlsx" required />
+          </div>
+          <button class="btn primary" type="submit">Subir archivo</button>
+          <button class="btn ghost" id="btn-confirmar" type="button" disabled>
+            Confirmar y guardar
+          </button>
         </form>
 
-        <div id="resumen" class="resumen"></div>
+        <div class="notice" id="resumen">Listo.</div>
+
+        <hr class="sep" />
 
         <div class="table-wrap">
-          <table class="table">
+          <table id="tabla">
             <thead>
-              <tr>
-                <th>Legajo</th>
-                <th>Nombre</th>
-                <th>Sector</th>
-                <th>Puesto</th>
-                <th>Fecha</th>
-                <th>Entrada</th>
-                <th>Salida</th>
-                <th>Horas</th>
-                <th>Fecha salida</th>
-                <th>Nocturnas (21-06)</th>
-                <th>Acción</th>
+              <tr class="thead-blue">
+                <th class="sortable" data-order="id">ID</th>
+                <th class="sortable" data-order="fecha">Fecha entrada</th>
+                <th class="sortable" data-order="fecha_salida">Fecha salida</th>
+                <th class="sortable" data-order="legajo">Legajo</th>
+                <th class="sortable" data-order="nombre">Nombre</th>
+                <th class="sortable" data-order="sector">Sector</th>
+                <th class="sortable" data-order="puesto">Puesto</th>
+                <th class="sortable" data-order="entrada">Entrada</th>
+                <th class="sortable" data-order="salida">Salida</th>
+                <th class="sortable" data-order="horas">Horas</th>
+                <th class="sortable" data-order="nocturnas">Nocturnas</th>
+                <th>Acciones</th>
               </tr>
             </thead>
-            <tbody id="tabla-body"></tbody>
+            <tbody id="rows"></tbody>
           </table>
         </div>
 
-        <div class="actions">
-          <button id="btn-guardar" class="btn btn--ghost" type="button">
-            Confirmar y guardar
-          </button>
-          <span id="estado-guardado" class="status"></span>
-        </div>
+        <p class="small" style="margin-top: 10px">
+          Tip: Si un turno noche queda “abierto”, no se guarda hasta completar
+          salida/fecha salida (se gestiona en “Jornadas Abiertas”).
+        </p>
       </section>
     </main>
 
-    <script src="script.js"></script>
+    <script src="sortable.js"></script>
+    <script src="importar.js"></script>
   </body>
 </html>

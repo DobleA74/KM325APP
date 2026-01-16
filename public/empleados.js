@@ -1,146 +1,163 @@
-console.log("✅ ABM Empleados cargado - v3");
+console.log("✅ empleados.js cargado");
 
-const form = document.getElementById("form-empleado");
-const inpLegajo = document.getElementById("legajo");
-const inpNombre = document.getElementById("nombre");
-const selSector = document.getElementById("sector");
-const selPuesto = document.getElementById("puesto");
-const tbody = document.getElementById("tbody-empleados");
-const msg = document.getElementById("msg");
+const $ = (id) => document.getElementById(id);
 
-let empleadosCache = [];
+const legajo = $("legajo");
+const nombre = $("nombre");
+const sector = $("sector");
+const puesto = $("puesto");
+const btnGuardar = $("btn-guardar");
+const tbody = $("empleados-body");
+const msg = $("msg");
 
-// Normaliza legajo a 8 dígitos (00000001) SOLO para guardar/actualizar
-function normalizarLegajo(valor) {
-  const soloNum = String(valor || "").trim().replace(/\D/g, "");
-  if (!soloNum) return "";
-  return soloNum.padStart(8, "0");
+const tabla = document.getElementById("tabla-empleados");
+
+const PUESTOS_POR_SECTOR = {
+  PLAYA: ["Playero/a", "Auxiliar de playa"],
+  MINI: ["Cajero/a", "Auxiliar de shop"],
+  "ADMINISTRACIÓN": ["Encargado"],
+};
+
+let editLegajo = null;
+let rowsCache = [];
+let sorter = null;
+
+function escapeHtml(s) {
+  return String(s ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
 }
 
-async function cargarEmpleados() {
-  const res = await fetch("/api/empleados");
-  empleadosCache = await res.json();
-  renderTabla();
-}
+function setPuestosBySector(sec, currentValue = "") {
+  const opts = PUESTOS_POR_SECTOR[String(sec || "")] || [];
+  puesto.innerHTML = "";
 
-function renderTabla() {
-  tbody.innerHTML = "";
-
-  if (!empleadosCache.length) {
-    tbody.innerHTML = `<tr><td colspan="5">No hay empleados cargados.</td></tr>`;
+  if (!sec) {
+    puesto.disabled = true;
+    puesto.innerHTML = '<option value="">-- Seleccionar sector primero --</option>';
     return;
   }
 
-  // Orden por legajo como texto
-  empleadosCache.sort((a, b) => String(a.legajo).localeCompare(String(b.legajo)));
-
-  empleadosCache.forEach((e) => {
-    const tr = document.createElement("tr");
-
-    tr.appendChild(td(e.legajo));
-    tr.appendChild(td(e.nombre));
-    tr.appendChild(td(e.sector));
-    tr.appendChild(td(e.puesto));
-
-    const tdAcc = document.createElement("td");
-
-    const btnEditar = document.createElement("button");
-    btnEditar.type = "button";
-    btnEditar.innerText = "Editar";
-    btnEditar.style.marginRight = "6px";
-    btnEditar.addEventListener("click", () => cargarEnFormulario(e));
-    tdAcc.appendChild(btnEditar);
-
-    const btnEliminar = document.createElement("button");
-    btnEliminar.type = "button";
-    btnEliminar.innerText = "Eliminar";
-    // IMPORTANTÍSIMO: eliminar con el legajo EXACTO (sin normalizar)
-    btnEliminar.addEventListener("click", () => eliminarEmpleadoExacto(e.legajo));
-    tdAcc.appendChild(btnEliminar);
-
-    tr.appendChild(tdAcc);
-    tbody.appendChild(tr);
+  puesto.disabled = false;
+  puesto.insertAdjacentHTML("beforeend", '<option value="">-- Seleccionar --</option>');
+  opts.forEach((p) => {
+    const sel = String(p) === String(currentValue) ? "selected" : "";
+    puesto.insertAdjacentHTML(
+      "beforeend",
+      `<option value="${escapeHtml(p)}" ${sel}>${escapeHtml(p)}</option>`
+    );
   });
 }
 
-function td(texto) {
-  const td = document.createElement("td");
-  td.innerText = texto ?? "";
-  return td;
+sector.addEventListener("change", () => setPuestosBySector(sector.value));
+setPuestosBySector(sector.value);
+
+function render() {
+  tbody.innerHTML = rowsCache
+    .map(
+      (r) => `
+      <tr>
+        <td data-label="Legajo">${escapeHtml(r.legajo)}</td>
+        <td data-label="Nombre">${escapeHtml(r.nombre)}</td>
+        <td data-label="Sector">${escapeHtml(r.sector)}</td>
+        <td data-label="Puesto">${escapeHtml(r.puesto)}</td>
+        <td data-label="Acciones" class="actions">
+          <button class="btn ghost" type="button" data-edit="${escapeHtml(r.legajo)}">Editar</button>
+          <button class="btn ghost" type="button" data-del="${escapeHtml(r.legajo)}">Eliminar</button>
+        </td>
+      </tr>
+    `
+    )
+    .join("");
+
+  tbody.querySelectorAll("[data-edit]").forEach((b) => {
+    b.addEventListener("click", () => {
+      const l = b.dataset.edit;
+      const row = rowsCache.find((x) => String(x.legajo) === String(l));
+      if (!row) return;
+
+      editLegajo = row.legajo;
+      legajo.value = row.legajo;
+      nombre.value = row.nombre || "";
+      sector.value = row.sector || "";
+      setPuestosBySector(sector.value, row.puesto || "");
+      puesto.value = row.puesto || "";
+      msg.textContent = `Editando legajo ${row.legajo}`;
+    });
+  });
+
+  tbody.querySelectorAll("[data-del]").forEach((b) => {
+    b.addEventListener("click", async () => {
+      const l = b.dataset.del;
+      if (!confirm(`Eliminar legajo ${l}?`)) return;
+
+      const res = await fetch(`/api/empleados/${encodeURIComponent(l)}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) return alert("No se pudo eliminar");
+
+      msg.textContent = `Eliminado ${l}`;
+      await cargar();
+    });
+  });
 }
 
-function cargarEnFormulario(e) {
-  inpLegajo.value = e.legajo || "";
-  inpNombre.value = e.nombre || "";
-  selSector.value = e.sector || "";
-  selPuesto.value = e.puesto || "";
-  msg.innerText = "✏️ Editando legajo " + (e.legajo || "");
-}
 
-// Guardar / actualizar (ACA SÍ normalizamos)
-form.addEventListener("submit", async (ev) => {
-  ev.preventDefault();
 
-  const legajoNorm = normalizarLegajo(inpLegajo.value);
-
-  const payload = {
-    legajo: legajoNorm,
-    nombre: (inpNombre.value || "").trim(),
-    sector: selSector.value || "",
-    puesto: selPuesto.value || "",
-  };
-
-  if (!payload.legajo) {
-    alert("Legajo es obligatorio");
+function initSorter() {
+  if (!window.makeSortableTable) {
+    console.error("❌ Falta cargar sortable.js antes de empleados.js");
     return;
   }
+  if (sorter) return;
+
+  sorter = window.makeSortableTable(
+    tabla,
+    rowsCache,
+    (row, key) => row[key],
+    (sorted) => {
+      rowsCache = sorted;
+      render();
+    },
+    "legajo",
+    "asc"
+  );
+}
+
+async function cargar() {
+  const res = await fetch("/api/empleados");
+  rowsCache = (await res.json().catch(() => [])) || [];
+
+  initSorter();
+  sorter?.setRows(rowsCache);
+  render();
+}
+
+btnGuardar.addEventListener("click", async () => {
+  const body = {
+    legajo: legajo.value.trim(),
+    nombre: nombre.value.trim(),
+    sector: sector.value,
+    puesto: puesto.value.trim(),
+  };
+  if (!body.legajo) return alert("Falta legajo");
 
   const res = await fetch("/api/empleados", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
+    body: JSON.stringify(body),
   });
+  if (!res.ok) return alert("No se pudo guardar");
 
-  const data = await res.json();
-
-  if (data.ok) {
-    msg.innerText = "✅ Guardado";
-    inpLegajo.value = "";
-    inpNombre.value = "";
-    selSector.value = "";
-    selPuesto.value = "";
-    await cargarEmpleados();
-  } else {
-    msg.innerText = "❌ Error: " + (data.error || "desconocido");
-  }
+  msg.textContent = `Guardado OK: ${body.legajo}`;
+  editLegajo = null;
+  legajo.value = "";
+  nombre.value = "";
+  sector.value = "";
+  setPuestosBySector("", "");
+  await cargar();
 });
 
-// Eliminar (ACA NO normalizamos: borramos el legajo TAL CUAL existe en DB)
-async function eliminarEmpleadoExacto(legajoExacto) {
-  const legajo = String(legajoExacto ?? "").trim();
-  if (!legajo) return;
-
-  if (!confirm(`¿Eliminar empleado legajo "${legajo}"?`)) return;
-
-  const res = await fetch(`/api/empleados/${encodeURIComponent(legajo)}`, {
-    method: "DELETE",
-  });
-
-  const data = await res.json();
-
-  if (data.ok) {
-    msg.innerText = `🗑️ Eliminado "${legajo}"`;
-    await cargarEmpleados();
-  } else {
-    msg.innerText = "❌ Error al eliminar: " + (data.error || "desconocido");
-  }
-}
-
-// Opcional: cuando salís del campo legajo, lo normaliza para que no vuelvas a crear "1"
-inpLegajo.addEventListener("blur", () => {
-  if (inpLegajo.value.trim() !== "") {
-    inpLegajo.value = normalizarLegajo(inpLegajo.value);
-  }
-});
-
-cargarEmpleados();
+cargar();
