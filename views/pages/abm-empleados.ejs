@@ -31,6 +31,16 @@
 </select>
         </div>
 
+        <div class="field" style="min-width:200px">
+          <label>Categoría (escala)</label>
+          <input id="categoria" placeholder="Operario" />
+        </div>
+
+        <div class="field">
+          <label>Fecha ingreso</label>
+          <input id="fecha_ingreso" type="date" />
+        </div>
+
         <button class="btn primary" id="btn-guardar">Guardar / Actualizar</button>
       </div>
 
@@ -44,6 +54,8 @@
         <th class="sortable" data-order="nombre">Nombre</th>
         <th class="sortable" data-order="sector">Sector</th>
         <th class="sortable" data-order="puesto">Puesto</th>
+            <th class="sortable" data-order="categoria">Categoría</th>
+            <th class="sortable" data-order="fecha_ingreso">Ingreso</th>
         <th>Acciones</th>
       </tr>
     </thead>

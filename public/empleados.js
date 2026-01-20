@@ -6,6 +6,8 @@ const legajo = $("legajo");
 const nombre = $("nombre");
 const sector = $("sector");
 const puesto = $("puesto");
+const categoria = $("categoria");
+const fechaIngreso = $("fecha_ingreso");
 const btnGuardar = $("btn-guardar");
 const tbody = $("empleados-body");
 const msg = $("msg");
@@ -63,6 +65,8 @@ function render() {
         <td data-label="Nombre">${escapeHtml(r.nombre)}</td>
         <td data-label="Sector">${escapeHtml(r.sector)}</td>
         <td data-label="Puesto">${escapeHtml(r.puesto)}</td>
+        <td data-label="Categoría">${escapeHtml(r.categoria)}</td>
+        <td data-label="Ingreso">${escapeHtml(r.fecha_ingreso)}</td>
         <td data-label="Acciones" class="actions">
           <button class="btn ghost" type="button" data-edit="${escapeHtml(r.legajo)}">Editar</button>
           <button class="btn ghost" type="button" data-del="${escapeHtml(r.legajo)}">Eliminar</button>
@@ -84,6 +88,8 @@ function render() {
       sector.value = row.sector || "";
       setPuestosBySector(sector.value, row.puesto || "");
       puesto.value = row.puesto || "";
+      categoria.value = row.categoria || "";
+      fechaIngreso.value = row.fecha_ingreso || "";
       msg.textContent = `Editando legajo ${row.legajo}`;
     });
   });
@@ -141,6 +147,8 @@ btnGuardar.addEventListener("click", async () => {
     nombre: nombre.value.trim(),
     sector: sector.value,
     puesto: puesto.value.trim(),
+    categoria: categoria.value.trim(),
+    fecha_ingreso: fechaIngreso.value,
   };
   if (!body.legajo) return alert("Falta legajo");
 
@@ -157,6 +165,8 @@ btnGuardar.addEventListener("click", async () => {
   nombre.value = "";
   sector.value = "";
   setPuestosBySector("", "");
+  categoria.value = "";
+  fechaIngreso.value = "";
   await cargar();
 });
 

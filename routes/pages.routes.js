@@ -15,6 +15,12 @@ router.get('/asistencias/gestion', pages.gestionAsistencias);
 router.get('/empleados', pages.abmEmpleados);
 router.get('/arqueos', pages.arqueos);
 
+// Liquidación (nuevo)
+router.get('/liquidacion', pages.liquidacion);
+router.get('/liquidacion/tardanzas', pages.liquidacionTardanzas);
+router.get('/liquidacion/escalas', pages.liquidacionEscalas);
+router.get('/liquidacion/print', pages.liquidacionPrint);
+
 // Backwards compatible static paths
 router.get('/index.html', (req, res) => res.redirect('/'));
 router.get('/rrhh.html', (req, res) => res.redirect('/rrhh'));
@@ -24,5 +30,6 @@ router.get('/jornadas-abiertas.html', (req, res) => res.redirect('/asistencias/j
 router.get('/gestion-asistencias.html', (req, res) => res.redirect('/asistencias/gestion'));
 router.get('/abm-empleados.html', (req, res) => res.redirect('/empleados'));
 router.get('/arqueos.html', (req, res) => res.redirect('/arqueos'));
+router.get('/liquidacion.html', (req, res) => res.redirect('/liquidacion'));
 
 module.exports = router;

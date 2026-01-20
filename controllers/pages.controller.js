@@ -55,3 +55,33 @@ exports.arqueos = (req, res) => {
     topbarMode: 'internal',
   });
 };
+
+// Liquidación
+exports.liquidacion = (req, res) => {
+  res.render('pages/liquidacion', {
+    pageTitle: 'KM325 RRHH – Liquidación',
+    topbarMode: 'internal',
+  });
+};
+
+exports.liquidacionTardanzas = (req, res) => {
+  res.render('pages/liquidacion-tardanzas', {
+    pageTitle: 'KM325 RRHH – Tardanzas',
+    topbarMode: 'internal',
+  });
+};
+
+exports.liquidacionEscalas = (req, res) => {
+  res.render('pages/liquidacion-escalas', {
+    pageTitle: 'KM325 RRHH – Escalas',
+    topbarMode: 'internal',
+  });
+};
+
+exports.liquidacionPrint = (req, res) => {
+  res.render('pages/liquidacion-print', {
+    pageTitle: 'KM325 RRHH – Liquidación (Imprimir)',
+    topbarMode: 'internal',
+    bodyClass: 'no-table-cards',
+  });
+};

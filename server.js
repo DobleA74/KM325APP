@@ -33,6 +33,18 @@ app.use(express.static(path.join(__dirname, 'public'), { index: false }));
 ================================ */
 const db = new sqlite3.Database("km325.db");
 
+// --- Simple migration helpers (idempotentes)
+function addColumnIfMissing(table, colName, colDefSql) {
+  return new Promise((resolve) => {
+    db.all(`PRAGMA table_info(${table})`, [], (err, rows) => {
+      if (err) return resolve(false);
+      const exists = (rows || []).some((r) => String(r.name).toLowerCase() === String(colName).toLowerCase());
+      if (exists) return resolve(false);
+      db.run(`ALTER TABLE ${table} ADD COLUMN ${colDefSql}`, [], () => resolve(true));
+    });
+  });
+}
+
 /* ===============================
    ARQUEOS - HELPERS
 ================================ */
@@ -80,6 +92,32 @@ function turnoWindow(sector, turno) {
   if (t === 'tarde') return { start: 13 * 60, end: 21 * 60 };
   if (t === 'noche') return { start: 21 * 60, end: 29 * 60 }; // 05:00 del día siguiente
   return { start: 0, end: 24 * 60 };
+}
+
+// Devuelve una ventana de turno usando un "cfg" por puesto (si existe).
+// cfg: { manana_start, manana_end, tarde_start, tarde_end, noche_start, noche_end }
+function turnoWindowByCfg(cfg, turno) {
+  const t = String(turno || '').toLowerCase();
+  if (!cfg) return null;
+  if (t === 'mañana' || t === 'manana') {
+    if (cfg.manana_start == null || cfg.manana_end == null) return null;
+    return { start: Number(cfg.manana_start), end: Number(cfg.manana_end) };
+  }
+  if (t === 'tarde') {
+    if (cfg.tarde_start == null || cfg.tarde_end == null) return null;
+    return { start: Number(cfg.tarde_start), end: Number(cfg.tarde_end) };
+  }
+  if (t === 'noche') {
+    if (cfg.noche_start == null || cfg.noche_end == null) return null;
+    return { start: Number(cfg.noche_start), end: Number(cfg.noche_end) };
+  }
+  return null;
+}
+
+function turnosPorCfg(cfg, sectorFallback) {
+  if (cfg && cfg.noche_start != null && cfg.noche_end != null) return ['mañana', 'tarde', 'noche'];
+  if (cfg) return ['mañana', 'tarde'];
+  return turnosPorSector(sectorFallback);
 }
 
 function overlapMinutes(aStart, aEnd, bStart, bEnd) {
@@ -138,6 +176,16 @@ function hhmmToMin(hhmm) {
   return h * 60 + m;
 }
 
+function minToHHMM(min) {
+  if (min == null || Number.isNaN(Number(min))) return "";
+  let m = Number(min);
+  // Normaliza a 0..1439
+  m = ((m % 1440) + 1440) % 1440;
+  const hh = String(Math.floor(m / 60)).padStart(2, "0");
+  const mm = String(m % 60).padStart(2, "0");
+  return `${hh}:${mm}`;
+}
+
 function diffHoras(entrada, salida) {
   const a = hhmmToMin(entrada);
   let b = hhmmToMin(salida);
@@ -187,6 +235,16 @@ db.serialize(() => {
       activo INTEGER DEFAULT 1
     )
   `);
+
+  // Migraciones idempotentes (agregar columnas nuevas sin romper DB existente)
+  addColumnIfMissing('empleados', 'categoria', 'categoria TEXT');
+  addColumnIfMissing('empleados', 'fecha_ingreso', 'fecha_ingreso TEXT');
+
+  // Migración: campos necesarios para Liquidación
+  // - categoria: para vincular con escala salarial
+  // - fecha_ingreso: para calcular antigüedad
+  // (idempotente: si ya existen, no hace nada)
+  // (ya ejecutado arriba)
 
   db.run(`
     CREATE TABLE IF NOT EXISTS asistencias (
@@ -277,6 +335,89 @@ db.serialize(() => {
       tipo TEXT CHECK(tipo IN ('nacional','turistico'))
     )
   `);
+
+  // ==========================
+  // LIQUIDACIÓN (nuevas tablas)
+  // ==========================
+  db.run(`
+    CREATE TABLE IF NOT EXISTS escalas (
+      mes TEXT,
+      categoria TEXT,
+      basico REAL DEFAULT 0,
+      premio_asistencia REAL DEFAULT 0,
+      premio_manejo_fondos REAL DEFAULT 0,
+      creado_en TEXT DEFAULT (datetime('now')),
+      PRIMARY KEY (mes, categoria)
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS adelantos (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      fecha TEXT,
+      legajo TEXT,
+      monto REAL DEFAULT 0,
+      concepto TEXT,
+      creado_en TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
+  db.run(`
+    CREATE INDEX IF NOT EXISTS idx_adelantos_mes_leg
+    ON adelantos(fecha, legajo)
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS novedades_rrhh (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      legajo TEXT,
+      tipo TEXT,
+      fecha_desde TEXT,
+      fecha_hasta TEXT,
+      dias INTEGER,
+      observaciones TEXT,
+      comprobante_url TEXT,
+      requiere_comprobante INTEGER DEFAULT 1,
+      creado_en TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
+  // Tardanzas: cálculo automático pero editable
+  db.run(`
+    CREATE TABLE IF NOT EXISTS tardanzas (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      legajo TEXT,
+      fecha TEXT,
+      minutos_auto INTEGER DEFAULT 0,
+      minutos_final INTEGER,
+      motivo_override TEXT,
+      creado_en TEXT DEFAULT (datetime('now')),
+      UNIQUE (legajo, fecha)
+    )
+  `);
+
+  // Migración tardanzas: campos para auditoría en UI (qué entrada se tomó y qué horario se esperaba)
+  addColumnIfMissing('tardanzas', 'turno', 'turno TEXT');
+  addColumnIfMissing('tardanzas', 'entrada_tomada', 'entrada_tomada TEXT');
+  addColumnIfMissing('tardanzas', 'inicio_turno', 'inicio_turno TEXT');
+
+  // Horarios por PUESTO (para tardanzas y asignación de turno)
+  // Permite que dos personas del mismo sector tengan horarios distintos.
+  // Valores en minutos desde 00:00. Para turno noche usar fin > 1440 (ej 29*60 para 05:00).
+  db.run(`
+    CREATE TABLE IF NOT EXISTS puesto_horarios (
+      puesto TEXT PRIMARY KEY,
+      manana_start INTEGER,
+      manana_end INTEGER,
+      tarde_start INTEGER,
+      tarde_end INTEGER,
+      noche_start INTEGER,
+      noche_end INTEGER,
+      creado_en TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
+  db.run(`CREATE INDEX IF NOT EXISTS idx_puesto_horarios_puesto ON puesto_horarios(puesto)`);
 
   // Seed 2026 (idempotente: INSERT OR IGNORE)
   const feriados2026 = [
@@ -584,13 +725,18 @@ app.get("/api/empleados", (req, res) => {
 });
 
 app.post("/api/empleados", (req, res) => {
-  const { legajo, nombre, sector, puesto } = req.body || {};
+  const { legajo, nombre, sector, puesto, categoria, fecha_ingreso } = req.body || {};
   const L = normLegajo(legajo);
   if (!L) return res.status(400).json({ error: "Falta legajo" });
 
+  const cat = String(categoria || "").trim();
+  const fi = String(fecha_ingreso || "").trim();
+  const fiOk = !fi || /^\d{4}-\d{2}-\d{2}$/.test(fi);
+  if (!fiOk) return res.status(400).json({ error: "Fecha ingreso inválida (YYYY-MM-DD)" });
+
   db.run(
-    "INSERT OR REPLACE INTO empleados (legajo,nombre,sector,puesto,activo) VALUES (?,?,?,?,1)",
-    [L, String(nombre || ""), String(sector || ""), String(puesto || "")],
+    "INSERT OR REPLACE INTO empleados (legajo,nombre,sector,puesto,categoria,fecha_ingreso,activo) VALUES (?,?,?,?,?,?,1)",
+    [L, String(nombre || ""), String(sector || ""), String(puesto || ""), cat, fi],
     (err) => {
       if (err) return res.status(500).json({ error: "DB error" });
       res.json({ ok: true });
@@ -1254,6 +1400,628 @@ app.post("/api/arqueos/confirmar", (req, res) => {
     });
   });
 });
+
+/* ===============================
+   LIQUIDACIÓN - HELPERS
+================================ */
+function ymdToDate(ymd) {
+  const [y, m, d] = String(ymd || '').split('-').map(Number);
+  if (!y || !m || !d) return null;
+  return new Date(y, m - 1, d);
+}
+
+function diffAniosCompletos(desdeYmd, hastaYmd) {
+  const d1 = ymdToDate(desdeYmd);
+  const d2 = ymdToDate(hastaYmd);
+  if (!d1 || !d2) return 0;
+  let years = d2.getFullYear() - d1.getFullYear();
+  const m2 = d2.getMonth();
+  const m1 = d1.getMonth();
+  if (m2 < m1 || (m2 === m1 && d2.getDate() < d1.getDate())) years -= 1;
+  return Math.max(0, years);
+}
+
+function clampInt(v, def = 0) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return def;
+  return Math.trunc(n);
+}
+
+function defaultCfgForSector(sector) {
+  const g = sectorGroup(sector);
+  if (g === 'shop') {
+    return { manana_start: 6 * 60, manana_end: 14 * 60, tarde_start: 14 * 60, tarde_end: 22 * 60, noche_start: null, noche_end: null };
+  }
+  // Playa y fallback
+  return { manana_start: 5 * 60, manana_end: 13 * 60, tarde_start: 13 * 60, tarde_end: 21 * 60, noche_start: 21 * 60, noche_end: 29 * 60 };
+}
+
+// Algunos puestos siguen horario "Shop" aunque estén en sector PLAYA (p.ej. Auxiliar de playa = como Cajero/a).
+function defaultCfgForPuesto(puesto, sector) {
+  const p = String(puesto || '').toLowerCase();
+  const esShopPorPuesto = p.includes('cajer') || p.includes('cajera') || p.includes('auxiliar de playa');
+  if (esShopPorPuesto) return defaultCfgForSector('shop');
+  return defaultCfgForSector(sector);
+}
+
+function esPuestoShopSchedule(puesto) {
+  const p = String(puesto || '').toLowerCase();
+  return p.includes('cajer') || p.includes('cajera') || p.includes('auxiliar de playa');
+}
+
+function assignTurnoPorVentana({ sector, entrada, salida, cfg }) {
+  const g = sectorGroup(sector);
+  const turnos = turnosPorCfg(cfg, g);
+
+  const aStartRaw = hhmmToMin(entrada);
+  let aEndRaw = hhmmToMin(salida);
+  if (aStartRaw == null || aEndRaw == null) return null;
+  if (aEndRaw < aStartRaw) aEndRaw += 1440;
+
+  // Ajuste para madrugada SOLO si existe turno noche en la configuración (para evaluar 21-05).
+  // Si el puesto no tiene noche (cfg.noche_start == null), NO desplazamos la hora, porque genera falsos positivos.
+  let aStart = aStartRaw;
+  let aEnd = aEndRaw;
+  const tieneNoche = cfg && cfg.noche_start != null;
+  if (tieneNoche) {
+    if (aStart <= 360) aStart += 1440;
+    if (aEnd <= 360) aEnd += 1440;
+  }
+
+  let best = { turno: null, mins: -1 };
+  for (const t of turnos) {
+    const w = (cfg ? turnoWindowByCfg(cfg, t) : null) || turnoWindow(g, t);
+    const mins = overlapMinutes(aStart, aEnd, w.start, w.end);
+    if (mins > best.mins) best = { turno: t, mins };
+  }
+  return best.turno;
+}
+
+function turnoStartMin(sector, turno, cfg) {
+  const g = sectorGroup(sector);
+  const w = (cfg ? turnoWindowByCfg(cfg, turno) : null) || turnoWindow(g, turno);
+  return w.start;
+}
+
+/* ===============================
+   LIQUIDACIÓN - API
+================================ */
+
+// (1) Recalcular tardanzas automáticas del mes (pero respetar overrides)
+app.post('/api/liquidacion/tardanzas/recalcular', (req, res) => {
+  const { mes } = req.body || {};
+  const r = monthRange(mes);
+  if (!r) return res.status(400).json({ ok: false, error: 'Mes inválido (YYYY-MM)' });
+
+  // Candidatos de inicio de turno (minutos desde 00:00) para inferir horarios por puesto
+  // cuando no hay configuración explícita en puesto_horarios.
+  const SHIFT_START_CANDIDATES = [
+    5 * 60,  // 05:00 (Playa mañana)
+    6 * 60,  // 06:00 (Shop mañana)
+    13 * 60, // 13:00 (Playa tarde)
+    14 * 60, // 14:00 (Shop tarde)
+    21 * 60, // 21:00 (Playa noche)
+    22 * 60  // 22:00 (Shop tarde si se extiende / referencia)
+  ];
+
+  const nearestCandidate = (min, candidates) => {
+    if (min == null) return null;
+    let best = candidates[0];
+    let bestD = Math.abs(min - best);
+    for (const c of candidates) {
+      const d = Math.abs(min - c);
+      if (d < bestD) { best = c; bestD = d; }
+    }
+    return best;
+  };
+
+  const median = (arr) => {
+    const a = (arr || []).slice().filter(v => typeof v === 'number' && !Number.isNaN(v)).sort((x,y)=>x-y);
+    if (!a.length) return null;
+    const mid = Math.floor(a.length / 2);
+    return a.length % 2 ? a[mid] : Math.round((a[mid-1] + a[mid]) / 2);
+  };
+
+  // Inferir cfg de un puesto mirando las entradas reales del mes (evita asumir 05:00 para todos los puestos de playa)
+  const inferCfgForPuesto = (puesto, rowsForPuesto) => {
+    const entries = (rowsForPuesto || [])
+      .map(r => hhmmToMin(r.entrada))
+      .filter(v => v != null);
+
+    // Split aproximado por franjas horarias
+    const morning = entries.filter(m => m >= 3*60 && m <= 10*60);
+    const afternoon = entries.filter(m => m >= 11*60 && m <= 18*60);
+    const evening = entries.filter(m => m >= 18*60 && m <= 23*60);
+
+    const mMed = median(morning);
+    const tMed = median(afternoon);
+    const nMed = median(evening);
+
+    // Si no hay datos suficientes, devolvemos null para usar defaults.
+    if (mMed == null && tMed == null && nMed == null) return null;
+
+    // Tomamos el candidato más cercano (05/06, 13/14, 21/22)
+    const mananaStart = mMed != null ? nearestCandidate(mMed, [5*60, 6*60]) : null;
+    const tardeStart = tMed != null ? nearestCandidate(tMed, [13*60, 14*60]) : null;
+    const nocheStart = nMed != null ? nearestCandidate(nMed, [21*60, 22*60]) : null;
+
+    // End estimado: +8hs (o ventanas estándar si es nocturno y cruza medianoche)
+    const makeEnd = (start) => (start == null ? null : start + 8*60);
+    const cfg = {
+      manana_start: mananaStart,
+      manana_end: makeEnd(mananaStart),
+      tarde_start: tardeStart,
+      tarde_end: makeEnd(tardeStart),
+      noche_start: nocheStart,
+      // Si el inicio es 21/22, el fin sería 29/30 (cruza medianoche)
+      noche_end: nocheStart == null ? null : (nocheStart + 8*60)
+    };
+    return cfg;
+  };
+
+  db.all(
+    `SELECT legajo, sector, puesto, fecha_entrada, entrada, salida
+     FROM asistencias
+     WHERE fecha_entrada BETWEEN ? AND ?`,
+    [r.start, r.end],
+    (err, rows) => {
+      if (err) return res.status(500).json({ ok: false, error: 'DB asistencias' });
+
+      // Cargar configuración de horarios por PUESTO (si existe). Si no existe, se usa el default por sector.
+      const puestos = Array.from(new Set((rows || []).map(r => String(r.puesto || '').trim()).filter(Boolean)));
+      const cfgMap = new Map(); // puesto -> cfg
+
+      const seedMissing = (missing) => new Promise((resolve) => {
+        if (!missing.length) return resolve();
+        const ins = db.prepare(
+          `INSERT OR IGNORE INTO puesto_horarios (puesto, manana_start, manana_end, tarde_start, tarde_end, noche_start, noche_end)
+           VALUES (?,?,?,?,?,?,?)`
+        );
+        for (const m of missing) {
+          // Primero intentamos inferir horarios por puesto mirando las entradas reales del mes.
+          // Esto evita asumir 05:00 para todos los puestos de "Playa".
+          const rowsP = (rows || []).filter(rr => String(rr.puesto || '').trim() === m);
+          const inf = inferCfgForPuesto(m, rowsP);
+
+          // Fallback: si no se puede inferir (pocos datos), usamos el default por sector.
+          const row = rowsP[0] || (rows || []).find(rr => String(rr.puesto || '').trim() === m);
+          const def = defaultCfgForPuesto(m, row?.sector);
+
+          const cfg = inf || def;
+          ins.run([m, cfg.manana_start, cfg.manana_end, cfg.tarde_start, cfg.tarde_end, cfg.noche_start, cfg.noche_end]);
+        }
+        ins.finalize(() => resolve());
+      });
+
+      const loadCfg = () => new Promise((resolve) => {
+        if (!puestos.length) return resolve();
+        const placeholders = puestos.map(() => '?').join(',');
+        db.all(
+          `SELECT puesto, manana_start, manana_end, tarde_start, tarde_end, noche_start, noche_end
+           FROM puesto_horarios
+           WHERE puesto IN (${placeholders})`,
+          puestos,
+          (e2, rows2) => {
+            if (!e2) {
+              for (const c of rows2 || []) cfgMap.set(String(c.puesto).trim(), c);
+            }
+            resolve();
+          }
+        );
+      });
+
+      const missing = puestos.filter(p => !cfgMap.has(p));
+      // Cargamos configs existentes, seed para los faltantes y recargamos
+      return loadCfg()
+        .then(() => {
+          const missing2 = puestos.filter(p => !cfgMap.has(p));
+          return seedMissing(missing2);
+        })
+        .then(() => loadCfg())
+        .then(() => {
+
+      // Si el puesto ya estaba sembrado con defaults por sector (auto-seed) pero los datos del mes
+      // muestran otro horario típico, actualizamos automáticamente para evitar tardanzas falsas.
+      // No tocamos configuraciones que ya difieran del default (asumimos que ahí hubo ajuste manual).
+      const updPromises = puestos.map((p) => new Promise((resolve) => {
+        const current = cfgMap.get(p);
+        const rowsP = (rows || []).filter(rr => String(rr.puesto || '').trim() === p);
+        const sectorRef = rowsP[0]?.sector;
+        const def = defaultCfgForPuesto(p, sectorRef);
+        const inf = inferCfgForPuesto(p, rowsP);
+
+        // Regla fija por negocio: ciertos puestos siguen SIEMPRE horario tipo "Shop"
+        // aunque estén en sector PLAYA (p.ej. "Auxiliar de playa" = 06-14 / 14-22).
+        const pLower = String(p || '').toLowerCase();
+        const esShopPorPuesto = pLower.includes('auxiliar de playa') || pLower.includes('cajer') || pLower.includes('cajera');
+        if (esShopPorPuesto && current) {
+          const shopDef = defaultCfgForSector('shop');
+          const yaEsShop =
+            current.manana_start === shopDef.manana_start && current.manana_end === shopDef.manana_end &&
+            current.tarde_start === shopDef.tarde_start && current.tarde_end === shopDef.tarde_end &&
+            (current.noche_start ?? null) === (shopDef.noche_start ?? null) &&
+            (current.noche_end ?? null) === (shopDef.noche_end ?? null);
+
+          if (!yaEsShop) {
+            return db.run(
+              `UPDATE puesto_horarios
+               SET manana_start=?, manana_end=?, tarde_start=?, tarde_end=?, noche_start=?, noche_end=?
+               WHERE puesto=?`,
+              [shopDef.manana_start, shopDef.manana_end, shopDef.tarde_start, shopDef.tarde_end, shopDef.noche_start, shopDef.noche_end, p],
+              () => {
+                cfgMap.set(p, { puesto: p, ...shopDef });
+                return resolve();
+              }
+            );
+          }
+        }
+
+        const isDefault = current && def &&
+          current.manana_start === def.manana_start && current.manana_end === def.manana_end &&
+          current.tarde_start === def.tarde_start && current.tarde_end === def.tarde_end &&
+          current.noche_start === def.noche_start && current.noche_end === def.noche_end;
+
+        const differsFromInf = current && inf && (
+          current.manana_start !== inf.manana_start || current.tarde_start !== inf.tarde_start || current.noche_start !== inf.noche_start
+        );
+
+        if (!isDefault || !inf || !differsFromInf) return resolve();
+
+        db.run(
+          `UPDATE puesto_horarios
+           SET manana_start=?, manana_end=?, tarde_start=?, tarde_end=?, noche_start=?, noche_end=?
+           WHERE puesto=?`,
+          [inf.manana_start, inf.manana_end, inf.tarde_start, inf.tarde_end, inf.noche_start, inf.noche_end, p],
+          () => {
+            // refrescamos el map in-memory
+            cfgMap.set(p, { puesto: p, ...inf });
+            resolve();
+          }
+        );
+      }));
+
+      return Promise.all(updPromises).then(() => {
+
+      // Importante: una persona puede tener varias asistencias el mismo día (p. ej. doble fichada).
+      // Para tardanza SOLO tomamos la PRIMERA entrada del día (la más temprana) y calculamos sobre esa.
+      // Si usamos la más tarde, puede marcar tardanza falsa (por ejemplo regreso de almuerzo).
+      const calc = new Map(); // key: legajo|fecha -> { entAdjMin, late, entradaStr, inicioStr, turno }
+      for (const a of rows || []) {
+        const leg = normLegajo(a.legajo);
+        const fecha = String(a.fecha_entrada || '');
+        if (!leg || !fecha) continue;
+
+        const puesto = String(a.puesto || '').trim();
+        const cfg = cfgMap.get(puesto) || null;
+        const turno = assignTurnoPorVentana({ sector: a.sector, entrada: a.entrada, salida: a.salida, cfg });
+        if (!turno) continue;
+
+        const start = turnoStartMin(a.sector, turno, cfg);
+        const ent = hhmmToMin(a.entrada);
+        if (ent == null) continue;
+
+        // Ajuste de madrugada SOLO para turno noche (21:00-05:00).
+        // Para turnos de día, si alguien entra antes, NO debe convertirse en "1426 min tarde".
+        let entAdj = ent;
+        if (turno === 'noche' && start >= 21 * 60 && start > entAdj && entAdj <= 360) entAdj += 1440;
+
+        const late = Math.max(0, entAdj - start);
+        const key = `${leg}|${fecha}`;
+        const prev = calc.get(key);
+        if (!prev || entAdj < prev.entAdjMin) {
+          calc.set(key, {
+            entAdjMin: entAdj,
+            late,
+            entradaStr: String(a.entrada || ''),
+            inicioStr: minToHHMM(start),
+            turno
+          });
+        }
+      }
+
+      const stmt = db.prepare(
+        `INSERT INTO tardanzas (legajo, fecha, minutos_auto, turno, entrada_tomada, inicio_turno)
+         VALUES (?,?,?,?,?,?)
+         ON CONFLICT(legajo, fecha) DO UPDATE SET
+           minutos_auto=excluded.minutos_auto,
+           turno=excluded.turno,
+           entrada_tomada=excluded.entrada_tomada,
+           inicio_turno=excluded.inicio_turno`
+      );
+      let count = 0;
+      for (const [key, obj] of calc.entries()) {
+        const [legajo, fecha] = key.split('|');
+        const mins = obj?.late ?? 0;
+        stmt.run([
+          legajo,
+          fecha,
+          clampInt(mins, 0),
+          String(obj?.turno || ''),
+          String(obj?.entradaStr || ''),
+          String(obj?.inicioStr || '')
+        ]);
+        count++;
+      }
+      stmt.finalize(() => res.json({ ok: true, recalculadas: count }));
+      });
+        });
+    }
+  );
+});
+
+// (2) Guardar override (editable)
+app.post('/api/liquidacion/tardanzas/override', (req, res) => {
+  const { legajo, fecha, minutos_final, motivo } = req.body || {};
+  const leg = normLegajo(legajo);
+  const f = String(fecha || '').trim();
+  if (!leg || !/^\d{4}-\d{2}-\d{2}$/.test(f)) {
+    return res.status(400).json({ ok: false, error: 'Datos inválidos' });
+  }
+  const mins = minutos_final === null || minutos_final === undefined || minutos_final === ''
+    ? null
+    : clampInt(minutos_final, 0);
+  db.run(
+    `INSERT INTO tardanzas (legajo, fecha, minutos_auto, minutos_final, motivo_override)
+     VALUES (?,?,0,?,?)
+     ON CONFLICT(legajo, fecha) DO UPDATE SET minutos_final=excluded.minutos_final, motivo_override=excluded.motivo_override`,
+    [leg, f, mins, String(motivo || '')],
+    (err) => {
+      if (err) return res.status(500).json({ ok: false, error: 'DB tardanzas' });
+      res.json({ ok: true });
+    }
+  );
+});
+
+// (2b) Listado tardanzas del mes (auto + final)
+app.get('/api/liquidacion/tardanzas', (req, res) => {
+  const mes = String(req.query.mes || '').trim();
+  const r = monthRange(mes);
+  if (!r) return res.status(400).json({ ok: false, error: 'Mes inválido (YYYY-MM)' });
+  db.all(
+    `SELECT t.legajo, e.nombre, e.puesto, t.fecha,
+            t.turno, t.entrada_tomada, t.inicio_turno,
+            t.minutos_auto, t.minutos_final, t.motivo_override
+     FROM tardanzas t
+     LEFT JOIN empleados e ON e.legajo = t.legajo
+     WHERE t.fecha BETWEEN ? AND ?
+     ORDER BY t.fecha, t.legajo`,
+    [r.start, r.end],
+    (err, rows) => {
+      if (err) return res.status(500).json({ ok: false, error: 'DB tardanzas' });
+      res.json({ ok: true, mes, rango: r, items: rows || [] });
+    }
+  );
+});
+
+// (3) CRUD escalas (upsert simple)
+app.post('/api/liquidacion/escalas/upsert', (req, res) => {
+  const { mes, categoria, basico, premio_asistencia, premio_manejo_fondos } = req.body || {};
+  const m = String(mes || '').trim();
+  const c = String(categoria || '').trim();
+  if (!/^\d{4}-\d{2}$/.test(m) || !c) return res.status(400).json({ ok: false, error: 'Datos inválidos' });
+  db.run(
+    `INSERT INTO escalas (mes, categoria, basico, premio_asistencia, premio_manejo_fondos)
+     VALUES (?,?,?,?,?)
+     ON CONFLICT(mes, categoria) DO UPDATE SET basico=excluded.basico, premio_asistencia=excluded.premio_asistencia, premio_manejo_fondos=excluded.premio_manejo_fondos`,
+    [m, c, Number(basico || 0), Number(premio_asistencia || 0), Number(premio_manejo_fondos || 0)],
+    (err) => {
+      if (err) return res.status(500).json({ ok: false, error: 'DB escalas' });
+      res.json({ ok: true });
+    }
+  );
+});
+
+// (3b) Listar escalas del mes
+app.get('/api/liquidacion/escalas', (req, res) => {
+  const mes = String(req.query.mes || '').trim();
+  if (!/^\d{4}-\d{2}$/.test(mes)) return res.status(400).json({ ok: false, error: 'Mes inválido (YYYY-MM)' });
+  db.all(
+    `SELECT mes, categoria, basico, premio_asistencia, premio_manejo_fondos
+     FROM escalas
+     WHERE mes=?
+     ORDER BY categoria`,
+    [mes],
+    (err, rows) => {
+      if (err) return res.status(500).json({ ok: false, error: 'DB escalas' });
+      res.json({ ok: true, mes, items: rows || [] });
+    }
+  );
+});
+
+// (4) Resumen de liquidación
+app.get('/api/liquidacion', (req, res) => {
+  const mes = String(req.query.mes || '').trim();
+  const r = monthRange(mes);
+  if (!r) return res.status(400).json({ ok: false, error: 'Mes inválido (YYYY-MM)' });
+
+  // Pre-carga para acelerar: feriados del rango
+  db.all(`SELECT fecha FROM feriados WHERE fecha BETWEEN ? AND ?`, [r.start, r.end], (errF, ferRows) => {
+    if (errF) return res.status(500).json({ ok: false, error: 'DB feriados' });
+    const setFeriados = new Set((ferRows || []).map((x) => x.fecha));
+
+    // Asistencias del mes
+    db.all(
+      `SELECT legajo, nombre, sector, puesto, fecha_entrada, entrada, salida
+       FROM asistencias
+       WHERE fecha_entrada BETWEEN ? AND ?`,
+      [r.start, r.end],
+      (errA, asis) => {
+        if (errA) return res.status(500).json({ ok: false, error: 'DB asistencias' });
+
+        // Empleados activos
+        db.all(`SELECT legajo, nombre, sector, puesto, categoria, fecha_ingreso, activo FROM empleados WHERE activo=1`, [], (errE, emps) => {
+          if (errE) return res.status(500).json({ ok: false, error: 'DB empleados' });
+
+          const mapEmp = new Map();
+          for (const e of emps || []) {
+            const leg = normLegajo(e.legajo);
+            if (!leg) continue;
+            mapEmp.set(leg, e);
+          }
+
+          // Index asistencias por legajo
+          const byLeg = new Map();
+          for (const a of asis || []) {
+            const leg = normLegajo(a.legajo);
+            if (!leg) continue;
+            if (!byLeg.has(leg)) byLeg.set(leg, []);
+            byLeg.get(leg).push(a);
+          }
+
+          // Tardanzas efectivas del mes
+          db.all(
+            `SELECT legajo, fecha, minutos_auto, minutos_final
+             FROM tardanzas
+             WHERE fecha BETWEEN ? AND ?`,
+            [r.start, r.end],
+            (errT, tRows) => {
+              if (errT) return res.status(500).json({ ok: false, error: 'DB tardanzas' });
+              const tMap = new Map(); // leg|fecha -> effective
+              for (const t of tRows || []) {
+                const leg = normLegajo(t.legajo);
+                const f = String(t.fecha || '');
+                const eff = (t.minutos_final === null || t.minutos_final === undefined) ? Number(t.minutos_auto || 0) : Number(t.minutos_final || 0);
+                tMap.set(`${leg}|${f}`, clampInt(eff, 0));
+              }
+
+              // Escalas del mes
+              db.all(`SELECT * FROM escalas WHERE mes=?`, [mes], (errS, sRows) => {
+                if (errS) return res.status(500).json({ ok: false, error: 'DB escalas' });
+                const sMap = new Map(); // categoria -> row
+                for (const s of sRows || []) sMap.set(String(s.categoria || '').trim(), s);
+
+                // Arqueos imputados por empleado (solo faltantes)
+                db.all(
+                  `SELECT aa.legajo, aa.monto_final, a.fecha
+                   FROM arqueo_asignaciones aa
+                   JOIN arqueos a ON a.id = aa.arqueo_id
+                   WHERE a.fecha BETWEEN ? AND ?`,
+                  [r.start, r.end],
+                  (errArq, arqRows) => {
+                    if (errArq) return res.status(500).json({ ok: false, error: 'DB arqueos' });
+                    const faltantes = new Map(); // legajo -> sumAbsNeg
+                    for (const row of arqRows || []) {
+                      const leg = normLegajo(row.legajo);
+                      const mf = Number(row.monto_final || 0);
+                      if (!leg) continue;
+                      if (mf < 0) {
+                        const prev = faltantes.get(leg) || 0;
+                        faltantes.set(leg, prev + Math.abs(mf));
+                      }
+                    }
+
+                    // Adelantos del mes
+                    db.all(
+                      `SELECT legajo, SUM(monto) as total
+                       FROM adelantos
+                       WHERE fecha BETWEEN ? AND ?
+                       GROUP BY legajo`,
+                      [r.start, r.end],
+                      (errAd, adRows) => {
+                        if (errAd) return res.status(500).json({ ok: false, error: 'DB adelantos' });
+                        const adMap = new Map();
+                        for (const a of adRows || []) adMap.set(normLegajo(a.legajo), Number(a.total || 0));
+
+                        const TOL = 10;
+                        const NOCT_PCT = 0.25;
+
+                        const out = [];
+                        for (const [leg, emp] of mapEmp.entries()) {
+                          const rows = byLeg.get(leg) || [];
+
+                          // Días trabajados (únicos)
+                          const diasSet = new Set(rows.map((x) => String(x.fecha_entrada || '')));
+                          diasSet.delete('');
+                          const diasTrab = diasSet.size;
+
+                          // Noches por turno (únicos por fecha)
+                          const nochesSet = new Set();
+                          for (const a of rows) {
+                            const turno = assignTurnoPorVentana({ sector: a.sector, entrada: a.entrada, salida: a.salida });
+                            if (String(turno).toLowerCase() === 'noche') nochesSet.add(String(a.fecha_entrada));
+                          }
+                          nochesSet.delete('');
+                          const nochesTurnos = nochesSet.size;
+
+                          // Feriados trabajados (únicos por fecha)
+                          const ferSet = new Set();
+                          for (const a of rows) {
+                            const f = String(a.fecha_entrada || '');
+                            if (setFeriados.has(f)) ferSet.add(f);
+                          }
+                          const feriadosTrab = ferSet.size;
+
+                          // Tardanzas: contar días con tardanza efectiva > tolerancia
+                          const tardSet = new Set();
+                          for (const d of diasSet) {
+                            const mins = tMap.get(`${leg}|${d}`);
+                            if (mins != null && mins > TOL) tardSet.add(d);
+                          }
+                          const tardanzas = tardSet.size;
+                          const pierdePresentismo = tardanzas >= 3;
+
+                          // Escala salarial
+                          const cat = String(emp.categoria || '').trim();
+                          const esc = sMap.get(cat) || { basico: 0, premio_asistencia: 0, premio_manejo_fondos: 0 };
+                          const basico = Number(esc.basico || 0);
+
+                          // Antigüedad
+                          const anios = diffAniosCompletos(emp.fecha_ingreso, r.end);
+                          const montoAnt = basico * 0.02 * anios;
+                          const valorHora = (basico + montoAnt) / 200;
+
+                          // Nocturnidad por turnos (8h)
+                          const horasNoct = nochesTurnos * 8;
+                          const adicionalNoct = valorHora * horasNoct * NOCT_PCT;
+
+                          // Premios
+                          const premioAsis = pierdePresentismo ? 0 : Number(esc.premio_asistencia || 0);
+                          const falt = Number(faltantes.get(leg) || 0);
+                          const premioMfRaw = Number(esc.premio_manejo_fondos || 0);
+                          const premioMf = Math.max(0, premioMfRaw - falt);
+
+                          // Adelantos
+                          const adelantos = Number(adMap.get(leg) || 0);
+
+                          out.push({
+                            legajo: leg,
+                            nombre: emp.nombre,
+                            sector: emp.sector,
+                            puesto: emp.puesto,
+                            categoria: cat,
+                            fecha_ingreso: emp.fecha_ingreso,
+                            dias_trabajados: diasTrab,
+                            noches_turnos: nochesTurnos,
+                            feriados_trabajados: feriadosTrab,
+                            tardanzas,
+                            pierde_presentismo: pierdePresentismo,
+                            basico,
+                            anios_antiguedad: anios,
+                            monto_antiguedad: Number(montoAnt.toFixed(2)),
+                            adicional_nocturnidad: Number(adicionalNoct.toFixed(2)),
+                            premio_asistencia: Number(premioAsis.toFixed(2)),
+                            premio_manejo_fondos_bruto: Number(premioMfRaw.toFixed(2)),
+                            ajuste_manejo_fondos: Number(falt.toFixed(2)),
+                            premio_manejo_fondos: Number(premioMf.toFixed(2)),
+                            adelantos: Number(adelantos.toFixed(2)),
+                          });
+                        }
+
+                        out.sort((a, b) => String(a.nombre || '').localeCompare(String(b.nombre || '')));
+                        res.json({ ok: true, mes, rango: r, items: out });
+                      }
+                    );
+                  }
+                );
+              });
+            }
+          );
+        });
+      }
+    );
+  });
+});
+
 
 /* ===============================
    START

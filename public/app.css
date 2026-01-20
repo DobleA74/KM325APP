@@ -510,18 +510,23 @@ th.sortable::after{
    (si ya lo estás renderizando así, listo)
    ========================= */
 @media (max-width: 860px){
-  .table-wrap{ overflow: visible; }
+  /*
+    TABLE -> CARDS (sin scroll lateral)
+    Se puede desactivar por página agregando la clase `no-table-cards` al <body>
+    (por ejemplo en vistas de impresión / PDF).
+  */
+  body:not(.no-table-cards) .table-wrap{ overflow: visible; }
 
-  table{ border-spacing: 0 12px; }
-  thead{ display:none; }
+  body:not(.no-table-cards) table{ border-spacing: 0 12px; }
+  body:not(.no-table-cards) thead{ display:none; }
 
-  tbody tr{
+  body:not(.no-table-cards) tbody tr{
     display:block;
     border-radius: 16px;
     overflow:hidden;
   }
 
-  tbody td{
+  body:not(.no-table-cards) tbody td{
     display:flex;
     justify-content:space-between;
     align-items:center;
@@ -535,7 +540,7 @@ th.sortable::after{
   }
 
   /* etiqueta a la izquierda */
-  tbody td::before{
+  body:not(.no-table-cards) tbody td::before{
     content: attr(data-label);
     font-weight: 800;
     color:#334155;
@@ -544,18 +549,18 @@ th.sortable::after{
   }
 
   /* valores a la derecha */
-  tbody td > *{
+  body:not(.no-table-cards) tbody td > *{
     max-width: 58%;
   }
 
   /* acciones: alineadas prolijas */
-  .actions{
+  body:not(.no-table-cards) .actions{
     justify-content:flex-end;
   }
 
   /* inputs dentro de cards: no se rompen */
-  tbody td input,
-  tbody td select{
+  body:not(.no-table-cards) tbody td input,
+  body:not(.no-table-cards) tbody td select{
     width: 58%;
     max-width: 58%;
   }
