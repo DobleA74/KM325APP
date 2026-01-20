@@ -12,15 +12,98 @@ const sqlite3 = require("sqlite3").verbose();
    APP
 ================================ */
 const app = express();
+
+// View engine (MVC)
+app.set('view engine', 'ejs');
+app.set('views', path.join(__dirname, 'views'));
+
 const PORT = 3001;
 
 app.use(express.json({ limit: "2mb" }));
-app.use(express.static(path.join(__dirname, "public")));
+
+// Page routes (rendered with EJS)
+const pagesRoutes = require('./routes/pages.routes');
+app.use(pagesRoutes);
+
+// Static assets
+app.use(express.static(path.join(__dirname, 'public'), { index: false }));
 
 /* ===============================
    SQLITE
 ================================ */
 const db = new sqlite3.Database("km325.db");
+
+/* ===============================
+   ARQUEOS - HELPERS
+================================ */
+function normSector(v) {
+  return String(v ?? "").trim();
+}
+
+function sectorKey(v) {
+  return normSector(v).toLowerCase();
+}
+
+// Agrupa nombres de sector usados en el sistema y en la DB
+// - 'MINI' suele ser el Shop (Mini/tienda)
+function sectorGroup(v) {
+  const s = sectorKey(v);
+  if (!s) return '';
+  if (s.includes('playa')) return 'playa';
+  if (s.includes('shop') || s.includes('mini') || s.includes('tienda')) return 'shop';
+  if (s.includes('admin') || s.includes('administr')) return 'admin';
+  return s;
+}
+
+function turnosPorSector(sector) {
+  const g = sectorGroup(sector);
+  if (g === 'shop') return ['mañana', 'tarde']; // Shop/Mini no tiene noche
+  if (g === 'playa') return ['mañana', 'tarde', 'noche'];
+  return ['mañana', 'tarde', 'noche']; // fallback
+}
+
+function turnoWindow(sector, turno) {
+  // minutos desde 00:00 del día (fecha_entrada)
+  // Playa: mañana 05-13, tarde 13-21, noche 21-05
+  // Shop/Mini: mañana 06-14, tarde 14-22
+  const t = String(turno || '').toLowerCase();
+  const g = sectorGroup(sector);
+
+  if (g === 'shop') {
+    if (t === 'mañana' || t === 'manana') return { start: 6 * 60, end: 14 * 60 };
+    if (t === 'tarde') return { start: 14 * 60, end: 22 * 60 };
+    return { start: 0, end: 24 * 60 };
+  }
+
+  // default: Playa / otros
+  if (t === 'mañana' || t === 'manana') return { start: 5 * 60, end: 13 * 60 };
+  if (t === 'tarde') return { start: 13 * 60, end: 21 * 60 };
+  if (t === 'noche') return { start: 21 * 60, end: 29 * 60 }; // 05:00 del día siguiente
+  return { start: 0, end: 24 * 60 };
+}
+
+function overlapMinutes(aStart, aEnd, bStart, bEnd) {
+  const s = Math.max(aStart, bStart);
+  const e = Math.min(aEnd, bEnd);
+  return Math.max(0, e - s);
+}
+
+function isPuestoPlaya(puesto) {
+  const p = String(puesto || "").toLowerCase();
+  return p.includes("playero") || p.includes("auxiliar de playa") || p.includes("auxiliar") && p.includes("playa");
+}
+
+function isPuestoShop(puesto) {
+  const p = String(puesto || "").toLowerCase();
+  return p.includes("cajero") || p.includes("auxiliar de caja") || (p.includes("auxiliar") && p.includes("caja"));
+}
+
+function puestoValidoParaSector(sector, puesto) {
+  const g = sectorGroup(sector);
+  if (g === 'playa') return isPuestoPlaya(puesto);
+  if (g === 'shop') return isPuestoShop(puesto);
+  return true;
+}
 
 /* ===============================
    HELPERS (GLOBAL)
@@ -79,6 +162,18 @@ function nocturnasHoras(entrada, salida) {
   return Math.max(0, end - start) / 60;
 }
 
+function monthRange(yyyyMm) {
+  // yyyyMm: "YYYY-MM" -> { start: YYYY-MM-01, end: YYYY-MM-last }
+  const m = String(yyyyMm || "").trim();
+  if (!/^\d{4}-\d{2}$/.test(m)) return null;
+  const [y, mo] = m.split("-").map(Number);
+  const startD = new Date(Date.UTC(y, mo - 1, 1));
+  const endD = new Date(Date.UTC(y, mo, 0));
+  const start = startD.toISOString().slice(0, 10);
+  const end = endD.toISOString().slice(0, 10);
+  return { start, end };
+}
+
 /* ===============================
    INIT DB
 ================================ */
@@ -132,6 +227,86 @@ db.serialize(() => {
     CREATE UNIQUE INDEX IF NOT EXISTS idx_jornadas_abiertas_unq
     ON jornadas_abiertas(legajo, fecha_entrada, entrada)
   `);
+
+  // ==========================
+  // ARQUEOS (caja) - día vencido
+  // ==========================
+  db.run(`
+    CREATE TABLE IF NOT EXISTS arqueos (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      fecha TEXT,
+      sector TEXT,
+      turno TEXT,
+      monto_diferencia REAL DEFAULT 0,
+      observaciones TEXT,
+      creado_en TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
+  db.run(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_arqueos_unq
+    ON arqueos(fecha, sector, turno)
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS arqueo_asignaciones (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      arqueo_id INTEGER,
+      legajo TEXT,
+      nombre TEXT,
+      puesto TEXT,
+      minutos INTEGER DEFAULT 0,
+      monto_propuesto REAL DEFAULT 0,
+      monto_final REAL DEFAULT 0,
+      creado_en TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
+  db.run(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_arqueo_asig_unq
+    ON arqueo_asignaciones(arqueo_id, legajo)
+  `);
+
+  // ==========================
+  // FERIADOS (solo feriados nacionales + turísticos)
+  // ==========================
+  db.run(`
+    CREATE TABLE IF NOT EXISTS feriados (
+      fecha TEXT PRIMARY KEY,
+      nombre TEXT,
+      tipo TEXT CHECK(tipo IN ('nacional','turistico'))
+    )
+  `);
+
+  // Seed 2026 (idempotente: INSERT OR IGNORE)
+  const feriados2026 = [
+    // Nacionales (incluye trasladables ya aplicados)
+    ['2026-01-01', 'Año Nuevo', 'nacional'],
+    ['2026-02-16', 'Carnaval', 'nacional'],
+    ['2026-02-17', 'Carnaval', 'nacional'],
+    ['2026-03-24', 'Día Nacional de la Memoria por la Verdad y la Justicia', 'nacional'],
+    ['2026-04-02', 'Día del Veterano y de los Caídos en la Guerra de Malvinas', 'nacional'],
+    ['2026-04-03', 'Viernes Santo', 'nacional'],
+    ['2026-05-01', 'Día del Trabajador', 'nacional'],
+    ['2026-05-25', 'Día de la Revolución de Mayo', 'nacional'],
+    ['2026-06-15', 'Paso a la Inmortalidad del General Martín Miguel de Güemes (trasladado)', 'nacional'],
+    ['2026-06-20', 'Paso a la Inmortalidad del General Manuel Belgrano', 'nacional'],
+    ['2026-07-09', 'Día de la Independencia', 'nacional'],
+    ['2026-08-17', 'Paso a la Inmortalidad del Gral. José de San Martín (trasladable)', 'nacional'],
+    ['2026-10-12', 'Día del Respeto a la Diversidad Cultural', 'nacional'],
+    ['2026-11-23', 'Día de la Soberanía Nacional (trasladado)', 'nacional'],
+    ['2026-12-08', 'Inmaculada Concepción de María', 'nacional'],
+    ['2026-12-25', 'Navidad', 'nacional'],
+
+    // Turísticos (días no laborables con fines turísticos)
+    ['2026-03-23', 'Día no laborable con fines turísticos', 'turistico'],
+    ['2026-07-10', 'Día no laborable con fines turísticos', 'turistico'],
+    ['2026-12-07', 'Día no laborable con fines turísticos', 'turistico'],
+  ];
+
+  const stmtF = db.prepare("INSERT OR IGNORE INTO feriados (fecha, nombre, tipo) VALUES (?,?,?)");
+  feriados2026.forEach((row) => stmtF.run(row));
+  stmtF.finalize();
 });
 
 /* ===============================
@@ -614,6 +789,469 @@ app.post("/api/jornadas-abiertas/:id/cerrar", (req, res) => {
         db.run(`DELETE FROM jornadas_abiertas WHERE id=?`, [id], () => res.json({ ok: true }));
       }
     );
+  });
+});
+
+/* ===============================
+   ARQUEOS (API) - día vencido
+================================ */
+function getAsistenciasParaFecha(db, fecha, cb) {
+  // Traemos asistencias que puedan solapar el día/turnos:
+  // - fecha_entrada = fecha
+  // - o fecha_salida = fecha (por si alguien termina temprano por la mañana)
+  db.all(
+    `
+    SELECT a.*, e.nombre AS emp_nombre, e.puesto AS emp_puesto, e.sector AS emp_sector
+    FROM asistencias a
+    LEFT JOIN empleados e ON e.legajo = a.legajo
+    WHERE a.fecha_entrada = ? OR a.fecha_salida = ?
+    `,
+    [String(fecha), String(fecha)],
+    (err, rows) => cb(err, rows || [])
+  );
+}
+
+function asistenciaIntervalMin(a) {
+  // minutos relativos al inicio del día de fecha_entrada
+  const start = hhmmToMin(a.entrada);
+  let end = hhmmToMin(a.salida);
+  if (start == null || end == null) return null;
+
+  // si cruza medianoche (o fecha_salida > fecha_entrada)
+  if (String(a.fecha_salida || "") > String(a.fecha_entrada || "") || end < start) {
+    end += 1440;
+  }
+  return { start, end };
+}
+
+function filtrarPorSector(sectorObjetivo, a) {
+  const gObj = sectorGroup(sectorObjetivo);
+  const gA = sectorGroup(a.emp_sector || a.sector || "");
+  if (!gObj) return true;
+  return gObj == gA;
+}
+
+// Encargados de turno (participan SOLO del turno al que pertenecen)
+// - Playa: PLAYERO/A
+// - Shop/MINI: CAJERO/A
+function esEncargadoDeTurno(sector, puesto) {
+  const g = sectorGroup(sector);
+  const p = String(puesto || "").trim().toUpperCase();
+  if (g === "playa") return p === "PLAYERO/A";
+  if (g === "shop") return p === "CAJERO/A";
+  return false;
+}
+
+// Como no existe campo "turno" en asistencias, inferimos el turno del encargado por la hora de ENTRADA.
+// Shop: se asigna por cercanía al inicio del turno (06:00 vs 14:00), para contemplar aperturas (13:40/13:55).
+// Playa: rangos amplios para contemplar aperturas/cierres.
+function inferirTurnoEncargado(sector, entradaHHMM) {
+  const g = sectorGroup(sector);
+  const m = hhmmToMin(entradaHHMM);
+  if (m == null) return null;
+
+  if (g === "shop") {
+    const dMan = Math.abs(m - 6 * 60);
+    const dTar = Math.abs(m - 14 * 60);
+    return dMan <= dTar ? "mañana" : "tarde";
+  }
+
+  if (g === "playa") {
+    const h = Math.floor(m / 60);
+    // Ventanas amplias para que el encargado no “salte” de turno por aperturas/cierres
+    if (h >= 18 || h < 4) return "noche";
+    if (h >= 4 && h < 12) return "mañana";
+    if (h >= 12 && h < 18) return "tarde";
+    return "noche";
+  }
+
+  return null;
+}
+
+function calcParticipaciones({ fecha, sector, turno }, asistencias) {
+  const { start: wStart, end: wEnd } = turnoWindow(sector, turno);
+  const parts = {};
+
+  for (const a of asistencias) {
+    if (!filtrarPorSector(sector, a)) continue;
+
+    const puesto = (a.emp_puesto || a.puesto || "").trim();
+    if (!puestoValidoParaSector(sector, puesto)) continue;
+
+    // Encargados: solo participan del turno inferido por su ENTRADA
+    if (esEncargadoDeTurno(sector, puesto)) {
+      const tAsig = inferirTurnoEncargado(sector, a.entrada);
+      if (tAsig && String(tAsig).toLowerCase() !== String(turno).toLowerCase()) {
+        continue;
+      }
+    }
+
+    const intv = asistenciaIntervalMin(a);
+    if (!intv) continue;
+
+    const mins = overlapMinutes(intv.start, intv.end, wStart, wEnd);
+    if (mins <= 0) continue;
+
+    const leg = normLegajo(a.legajo);
+    if (!leg) continue;
+
+    if (!parts[leg]) {
+      parts[leg] = {
+        legajo: leg,
+        nombre: (a.emp_nombre || a.nombre || "").trim(),
+        puesto,
+        minutos: 0,
+      };
+    }
+    parts[leg].minutos += mins;
+  }
+
+  return Object.values(parts).filter((x) => x.minutos > 0);
+}
+
+function upsertArqueo({ fecha, sector, turno, monto_diferencia, observaciones }, cb) {
+  const f = String(fecha);
+  const s = normSector(sector);
+  const t = String(turno);
+  const m = Number(monto_diferencia || 0);
+  const o = String(observaciones || "");
+
+  db.run(
+    `
+    INSERT INTO arqueos (fecha, sector, turno, monto_diferencia, observaciones)
+    VALUES (?,?,?,?,?)
+    ON CONFLICT(fecha, sector, turno) DO UPDATE SET
+      monto_diferencia=excluded.monto_diferencia,
+      observaciones=excluded.observaciones
+    `,
+    [f, s, t, m, o],
+    (err) => {
+      if (err) return cb(err);
+      db.get(
+        `SELECT * FROM arqueos WHERE fecha=? AND sector=? AND turno=?`,
+        [f, s, t],
+        (err2, row) => cb(err2, row)
+      );
+    }
+  );
+}
+
+app.get("/api/arqueos", (req, res) => {
+  const { fecha, sector } = req.query;
+  if (!fecha) return res.status(400).json({ ok: false, error: "Falta fecha" });
+  const s = normSector(sector || "");
+
+  const where = ["fecha=?"];
+  const params = [String(fecha)];
+  if (s) { where.push("sector=?"); params.push(s); }
+  const whereSql = `WHERE ${where.join(" AND ")}`;
+
+  db.all(`SELECT * FROM arqueos ${whereSql} ORDER BY sector ASC, turno ASC`, params, (err, arqueos) => {
+    if (err) return res.status(500).json({ ok: false, error: "DB error" });
+    const ids = (arqueos || []).map((a) => a.id);
+    if (!ids.length) return res.json({ ok: true, arqueos: [], asignaciones: [] });
+
+    db.all(
+      `SELECT * FROM arqueo_asignaciones WHERE arqueo_id IN (${ids.map(() => "?").join(",")}) ORDER BY arqueo_id, legajo`,
+      ids,
+      (err2, asigs) => {
+        if (err2) return res.status(500).json({ ok: false, error: "DB error" });
+        res.json({ ok: true, arqueos: arqueos || [], asignaciones: asigs || [] });
+      }
+    );
+  });
+});
+
+/* ===============================
+   FERIADOS
+================================ */
+app.get("/api/feriados", (req, res) => {
+  const anio = String(req.query.anio || "").trim();
+  if (anio && !/^\d{4}$/.test(anio)) {
+    return res.status(400).json({ ok: false, error: "anio inválido" });
+  }
+  const params = [];
+  let sql = "SELECT fecha, nombre, tipo FROM feriados";
+  if (anio) {
+    sql += " WHERE substr(fecha,1,4)=?";
+    params.push(anio);
+  }
+  sql += " ORDER BY fecha";
+  db.all(sql, params, (err, rows) => {
+    if (err) return res.status(500).json({ ok: false, error: "DB error" });
+    res.json({ ok: true, feriados: rows || [] });
+  });
+});
+
+// Cuenta feriados trabajados (solo nacionales + turísticos) por legajo en un mes
+app.get("/api/feriados/trabajados", (req, res) => {
+  const mes = String(req.query.mes || "").trim(); // YYYY-MM
+  const rng = monthRange(mes);
+  if (!rng) return res.status(400).json({ ok: false, error: "mes inválido" });
+
+  const sql = `
+    SELECT a.legajo AS legajo, a.nombre AS nombre, COUNT(DISTINCT a.fecha_entrada) AS feriados_trabajados
+    FROM asistencias a
+    JOIN feriados f ON f.fecha = a.fecha_entrada
+    WHERE a.fecha_entrada BETWEEN ? AND ?
+      AND f.tipo IN ('nacional','turistico')
+    GROUP BY a.legajo, a.nombre
+    ORDER BY a.nombre
+  `;
+
+  db.all(sql, [rng.start, rng.end], (err, rows) => {
+    if (err) return res.status(500).json({ ok: false, error: "DB error" });
+    res.json({ ok: true, mes, desde: rng.start, hasta: rng.end, items: rows || [] });
+  });
+});
+
+/* ===============================
+   DASHBOARD (HOME)
+   Endpoint liviano para la pantalla inicial.
+================================ */
+app.get('/api/dashboard', (req, res) => {
+  // Dashboard "operativo" para el inicio: estado de asistencias, arqueos y alertas.
+  // Mantiene compatibilidad con campos antiguos (ultimos_arqueos/ultimas_asistencias/ultimas_novedades).
+
+  // Fecha local AR (UTC-03). Evita corrimientos raros si el servidor corre en otra zona.
+  function isoDateAR(d) {
+    const ms = d.getTime() - (d.getTimezoneOffset() * 60000) + (3 * 60 * 60000);
+    return new Date(ms).toISOString().slice(0, 10);
+  }
+
+  const hoy = isoDateAR(new Date());
+  const ayer = isoDateAR(new Date(Date.now() - 24 * 60 * 60 * 1000));
+
+  const qUltArq = `SELECT fecha, COUNT(*) AS cant FROM arqueos GROUP BY fecha ORDER BY fecha DESC LIMIT 1`;
+  const qUltAsi = `SELECT fecha_entrada AS fecha, COUNT(*) AS cant FROM asistencias GROUP BY fecha_entrada ORDER BY fecha_entrada DESC LIMIT 1`;
+  const qAyerAsi = `SELECT COUNT(*) AS cant FROM asistencias WHERE fecha_entrada = ?`;
+  const qPendJorn = `SELECT COUNT(*) AS cant FROM jornadas_abiertas`;
+
+  // Arqueos esperados por día (regla fija)
+  const ESPERADOS = {
+    playa: ['mañana', 'tarde', 'noche'],
+    shop: ['mañana', 'tarde'],
+  };
+
+  function getArqueosEstadoPorFecha(fecha, cb) {
+    const q = `SELECT sector, turno FROM arqueos WHERE fecha = ?`;
+    db.all(q, [fecha], (err, rows) => {
+      if (err) return cb(err);
+
+      const have = { playa: new Set(), shop: new Set() };
+      for (const r of rows || []) {
+        const s = String(r.sector || '').toLowerCase();
+        const t = String(r.turno || '').toLowerCase();
+        if (have[s]) have[s].add(t);
+      }
+
+      const resu = {};
+      for (const [sec, turnos] of Object.entries(ESPERADOS)) {
+        const cargados = have[sec] ? Array.from(have[sec]) : [];
+        const faltan = turnos.filter((t) => !have[sec] || !have[sec].has(t));
+        resu[sec] = {
+          esperados: turnos.length,
+          cargados: cargados.length,
+          faltan,
+        };
+      }
+      cb(null, resu);
+    });
+  }
+
+  db.get(qUltArq, (e1, r1) => {
+    if (e1) return res.status(500).json({ ok: false, error: 'DB arqueos' });
+    db.get(qUltAsi, (e2, r2) => {
+      if (e2) return res.status(500).json({ ok: false, error: 'DB asistencias' });
+
+      db.get(qAyerAsi, [ayer], (e3, r3) => {
+        if (e3) return res.status(500).json({ ok: false, error: 'DB asistencias ayer' });
+        db.get(qPendJorn, (e4, r4) => {
+          if (e4) return res.status(500).json({ ok: false, error: 'DB jornadas abiertas' });
+
+          const ultArqStr = r1 ? `${r1.fecha} (${r1.cant} turnos)` : '—';
+          const ultAsiStr = r2 ? `${r2.fecha} (${r2.cant} registros)` : '—';
+
+          const asist = {
+            ultima_fecha: r2 ? r2.fecha : null,
+            ultima_cant: r2 ? r2.cant : 0,
+            ayer_fecha: ayer,
+            ayer_cant: r3 ? r3.cant : 0,
+            ayer_cargado: (r3 ? r3.cant : 0) > 0,
+          };
+
+          const jornadas = { pendientes: r4 ? r4.cant : 0 };
+
+          const fechaArq = r1 ? r1.fecha : null;
+          const fechaChequeoArq = fechaArq || ayer;
+
+          getArqueosEstadoPorFecha(fechaChequeoArq, (e5, estadoArq) => {
+            if (e5) return res.status(500).json({ ok: false, error: 'DB arqueos estado' });
+
+            const arqueos = {
+              ultima_fecha: fechaArq,
+              // estado del ultimo dia de arqueos (si no hay, se calcula sobre ayer)
+              estado: estadoArq,
+              fecha_estado: fechaChequeoArq,
+            };
+
+            // Novedades: si existe la tabla, contamos el mes actual
+            const now = new Date();
+            const yyyy = now.getFullYear();
+            const mm = String(now.getMonth() + 1).padStart(2, '0');
+            const mes = `${yyyy}-${mm}`;
+            const rng = monthRange(mes);
+
+            const qChk = `SELECT name FROM sqlite_master WHERE type='table' AND name='novedades'`;
+            db.get(qChk, (e6, t) => {
+              const base = {
+                ok: true,
+                hoy,
+                ayer,
+                ultimos_arqueos: ultArqStr,
+                ultimas_asistencias: ultAsiStr,
+                ultimas_novedades: '—',
+                asistencias: asist,
+                arqueos,
+                jornadas_abiertas: jornadas,
+                alertas: [],
+              };
+
+              // alertas
+              if (!asist.ayer_cargado) {
+                base.alertas.push({ tipo: 'asistencias', mensaje: `Falta cargar asistencias de ${ayer}.` });
+              }
+              if (jornadas.pendientes > 0) {
+                base.alertas.push({ tipo: 'jornadas', mensaje: `Tenés ${jornadas.pendientes} jornada(s) abierta(s) pendiente(s).` });
+              }
+              for (const sec of Object.keys(ESPERADOS)) {
+                const st = (estadoArq && estadoArq[sec]) ? estadoArq[sec] : { esperados: ESPERADOS[sec].length, cargados: 0, faltan: ESPERADOS[sec] };
+                if (st.faltan && st.faltan.length) {
+                  base.alertas.push({ tipo: 'arqueos', mensaje: `Arqueos incompletos (${sec}) en ${fechaChequeoArq}: faltan ${st.faltan.join(', ')}.` });
+                }
+              }
+
+              if (e6 || !t) return res.json(base);
+
+              const qNov = `SELECT COUNT(*) AS cant FROM novedades WHERE fecha BETWEEN ? AND ?`;
+              db.get(qNov, [rng.start, rng.end], (e7, r7) => {
+                if (e7) return res.json(base);
+                const cant = r7 ? r7.cant : 0;
+                base.ultimas_novedades = `${cant} este mes`;
+                base.novedades = { mes, cant };
+                return res.json(base);
+              });
+            });
+          });
+        });
+      });
+    });
+  });
+});
+
+app.post("/api/arqueos/guardar-y-calcular", (req, res) => {
+  const { fecha, sector, turnos } = req.body || {};
+  if (!fecha || !sector || !Array.isArray(turnos)) {
+    return res.status(400).json({ ok: false, error: "Faltan datos" });
+  }
+
+  const turnosValidos = turnosPorSector(sector);
+  const turnosIn = turnos.filter((t) => turnosValidos.includes(String(t.turno || "").toLowerCase()));
+
+  // 1) upsert arqueos
+  const guardados = [];
+  const items = turnosIn.slice();
+
+  function nextUpsert() {
+    const it = items.shift();
+    if (!it) {
+      // 2) calcular participaciones con asistencias del día
+      return getAsistenciasParaFecha(db, fecha, (e2, asistencias) => {
+        if (e2) return res.status(500).json({ ok: false, error: "DB asistencias" });
+
+        const propuestas = [];
+        for (const arq of guardados) {
+          const parts = calcParticipaciones({ fecha, sector: arq.sector, turno: arq.turno }, asistencias);
+          const totalMins = parts.reduce((acc, p) => acc + p.minutos, 0) || 0;
+          for (const p of parts) {
+            const prop = totalMins > 0 ? p.minutos / totalMins : 0;
+            const montoPropuesto = Number((Number(arq.monto_diferencia || 0) * prop).toFixed(2));
+            propuestas.push({
+              arqueo_id: arq.id,
+              fecha: arq.fecha,
+              sector: arq.sector,
+              turno: arq.turno,
+              legajo: p.legajo,
+              nombre: p.nombre,
+              puesto: p.puesto,
+              minutos: p.minutos,
+              monto_propuesto: montoPropuesto,
+              monto_final: montoPropuesto,
+            });
+          }
+        }
+
+        res.json({ ok: true, arqueos: guardados, propuestas });
+      });
+    }
+
+    upsertArqueo(
+      {
+        fecha,
+        sector,
+        turno: String(it.turno || "").toLowerCase(),
+        monto_diferencia: it.monto_diferencia,
+        observaciones: it.observaciones,
+      },
+      (err, row) => {
+        if (err) return res.status(500).json({ ok: false, error: "DB arqueos" });
+        guardados.push(row);
+        nextUpsert();
+      }
+    );
+  }
+
+  nextUpsert();
+});
+
+app.post("/api/arqueos/confirmar", (req, res) => {
+  const { arqueo_id, asignaciones } = req.body || {};
+  const id = Number(arqueo_id);
+  if (!id || !Array.isArray(asignaciones)) {
+    return res.status(400).json({ ok: false, error: "Faltan datos" });
+  }
+
+  db.run(`DELETE FROM arqueo_asignaciones WHERE arqueo_id=?`, [id], (err) => {
+    if (err) return res.status(500).json({ ok: false, error: "DB error" });
+
+    const stmt = db.prepare(
+      `
+      INSERT INTO arqueo_asignaciones
+      (arqueo_id, legajo, nombre, puesto, minutos, monto_propuesto, monto_final)
+      VALUES (?,?,?,?,?,?,?)
+      `
+    );
+
+    let count = 0;
+    for (const a of asignaciones) {
+      const leg = normLegajo(a.legajo);
+      if (!leg) continue;
+      stmt.run([
+        id,
+        leg,
+        String(a.nombre || ""),
+        String(a.puesto || ""),
+        Number(a.minutos || 0),
+        Number(a.monto_propuesto || 0),
+        Number(a.monto_final || 0),
+      ]);
+      count++;
+    }
+
+    stmt.finalize((err2) => {
+      if (err2) return res.status(500).json({ ok: false, error: "DB error" });
+      res.json({ ok: true, guardadas: count });
+    });
   });
 });
 

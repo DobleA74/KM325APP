@@ -1,33 +1,7 @@
-<!DOCTYPE html>
-<html lang="es">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>KM325 RRHH – Jornadas abiertas</title>
-    <link rel="stylesheet" href="app.css" />
-    <link rel="icon" href="favicon.png" />
-  </head>
-  <body>
-    <header class="topbar">
-      <div class="brand">
-        <img
-          src="img/logo-gulf.png"
-          alt="Logo"
-          onerror="this.style.display='none'"
-        />
-        <div>
-          <div class="brand-title">KM325</div>
-          <div class="brand-sub">Gestión RRHH</div>
-        </div>
-      </div>
+<%- include('../partials/document-start', { pageTitle }) %>
+<%- include('../partials/topbar', { topbarMode, subtitle: 'Gestión RRHH' }) %>
 
-      <nav class="nav">
-        <a href="/index.html">Inicio</a>
-        <a class="active" href="/rrhh.html">RRHH</a>
-      </nav>
-    </header>
-
-    <main class="wrap">
+<main class="wrap">
       <section class="card">
         <h1>Jornadas abiertas</h1>
         <p class="muted">
@@ -175,7 +149,8 @@
       </section>
     </main>
 
-    <script src="sortable.js"></script>
-    <script src="abiertas.js"></script>
-  </body>
-</html>
+<%- include('../partials/footer') %>
+
+<script src="/sortable.js"></script>
+<script src="/abiertas.js"></script>
+<%- include('../partials/document-end') %>

@@ -1,0 +1,27 @@
+<%- include('../partials/document-start', { pageTitle }) %>
+<%- include('../partials/topbar', { topbarMode, subtitle: 'Gestión RRHH' }) %>
+
+<main class="container">
+  <section class="card">
+    <h1>Asistencias</h1>
+    <p>Accesos rápidos del módulo de asistencias.</p>
+
+    <div class="grid2" style="gap:12px">
+      <a class="card" href="/asistencias/carga" style="text-decoration:none; color:inherit">
+        <h2 style="margin-top:0">Carga de Asistencias</h2>
+        <p class="small">Importar Excel de fichadas y confirmar asistencias.</p>
+      </a>
+      <a class="card" href="/asistencias/jornadas" style="text-decoration:none; color:inherit">
+        <h2 style="margin-top:0">Jornadas abiertas</h2>
+        <p class="small">Registrar entradas y cerrar jornadas al finalizar.</p>
+      </a>
+      <a class="card" href="/asistencias/gestion" style="text-decoration:none; color:inherit">
+        <h2 style="margin-top:0">Gestión de asistencias</h2>
+        <p class="small">Edición, filtros y control mensual.</p>
+      </a>
+    </div>
+  </section>
+</main>
+
+<%- include('../partials/footer') %>
+<%- include('../partials/document-end') %>

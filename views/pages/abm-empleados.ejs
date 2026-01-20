@@ -1,28 +1,7 @@
-<!doctype html>
-<html lang="es">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>KM325 RRHH – ABM Empleados</title>
-  <link rel="stylesheet" href="app.css" />
-  <link rel="icon" href="favicon.png" />
-</head>
-<body>
-  <header class="topbar">
-    <div class="brand">
-      <img src="img/logo-gulf.png" alt="Logo" onerror="this.style.display='none'">
-      <div class="title">
-        <strong>KM325</strong>
-        <span>Gestión RRHH</span>
-      </div>
-    </div>
-    <nav class="nav">
-        <a href="/index.html">Inicio</a>
-        <a class="active" href="/rrhh.html">RRHH</a>
-      </nav>
-  </header>
+<%- include('../partials/document-start', { pageTitle }) %>
+<%- include('../partials/topbar', { topbarMode, subtitle: 'Gestión RRHH' }) %>
 
-  <main class="container">
+<main class="container">
     <section class="card">
       <h1>ABM de Empleados</h1>
       <p>Alta, edición y eliminación de empleados (legajo como clave).</p>
@@ -79,8 +58,8 @@
     </section>
   </main>
 
-  <script src="sortable.js"></script>
-<script src="empleados.js"></script>
+<%- include('../partials/footer') %>
 
-</body>
-</html>
+<script src="/sortable.js"></script>
+<script src="/empleados.js"></script>
+<%- include('../partials/document-end') %>

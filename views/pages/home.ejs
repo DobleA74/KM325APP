@@ -1,0 +1,42 @@
+<%- include('../partials/document-start', { pageTitle, bodyClass: 'home' }) %>
+<%- include('../partials/topbar', { topbarMode, subtitle: 'Sistema de gestión' }) %>
+
+<main class="home-hero">
+  <div class="home-hero__bg" aria-hidden="true"></div>
+  <div class="home-hero__overlay" aria-hidden="true"></div>
+
+  <section class="home-hero__content">
+    <h1>Bienvenido/a</h1>
+    <p>Ingresá al módulo de Gestión de RRHH.</p>
+
+    <div class="home-hero__actions">
+      <a class="btn primary btn-rrhh" href="/rrhh">Gestión RRHH</a>
+      <span class="home-hero__hint">Próximamente: tablero con últimos movimientos y novedades.</span>
+    </div>
+
+    <div class="home-hero__cards">
+      <div class="home-mini-card">
+        <div class="home-mini-card__title">Últimos arqueos</div>
+        <div class="home-mini-card__value" id="dash-arqueos">—</div>
+        <div class="home-mini-card__sub" id="dash-arqueos-estado">—</div>
+      </div>
+      <div class="home-mini-card">
+        <div class="home-mini-card__title">Asistencias</div>
+        <div class="home-mini-card__value" id="dash-asistencias">—</div>
+        <div class="home-mini-card__sub" id="dash-asistencias-ayer">—</div>
+      </div>
+      <div class="home-mini-card">
+        <div class="home-mini-card__title">Jornadas abiertas</div>
+        <div class="home-mini-card__value" id="dash-jornadas">—</div>
+        <div class="home-mini-card__sub" id="dash-novedades">—</div>
+      </div>
+    </div>
+
+    <div class="home-alerts" id="dash-alertas" aria-live="polite"></div>
+  </section>
+</main>
+
+<%- include('../partials/footer') %>
+
+<script src="/dashboard-home.js"></script>
+<%- include('../partials/document-end') %>

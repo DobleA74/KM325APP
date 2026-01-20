@@ -3,84 +3,52 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>KM325 RRHH – Asistencias</title>
+    <title>KM325 – Inicio</title>
     <link rel="stylesheet" href="app.css" />
     <link rel="icon" href="favicon.png" />
   </head>
-  <body>
+  <body class="home">
     <header class="topbar">
       <div class="brand">
-        <img
-          src="img/logo-gulf.png"
-          alt="Logo"
-          onerror="this.style.display='none'"
-        />
+        <img src="img/logo-gulf.png" alt="Logo" onerror="this.style.display='none'" />
         <div class="title">
           <strong>KM325</strong>
-          <span>Gestión RRHH</span>
+          <span>Sistema de gestión</span>
         </div>
       </div>
       <nav class="nav">
-        <a class="active" href="/index.html">Asistencias</a>
-        <a href="/abm-empleados.html">ABM Empleados</a>
-        <a href="/jornadas-abiertas.html">Jornadas Abiertas</a>
-        <a href="/gestion-asistencias.html">Gestión Asistencias</a>
+        <a class="active" href="/index.html">Inicio</a>
       </nav>
     </header>
 
-    <main class="container">
-      <section class="card">
-        <h1>Importar archivo Excel</h1>
-        <p>
-          Subí el .xlsx de fichadas. Ajustá entradas/salidas y confirmá para
-          guardar (sin duplicados).
-        </p>
+    <main class="home-hero">
+      <div class="home-hero__bg" aria-hidden="true"></div>
+      <div class="home-hero__overlay" aria-hidden="true"></div>
 
-        <form id="form-excel" class="row">
-          <div class="field">
-            <label>Archivo</label>
-            <input type="file" id="archivo" accept=".xlsx" required />
-          </div>
-          <button class="btn primary" type="submit">Subir archivo</button>
-          <button class="btn ghost" id="btn-confirmar" type="button" disabled>
-            Confirmar y guardar
-          </button>
-        </form>
+      <section class="home-hero__content">
+        <h1>Bienvenido/a</h1>
+        <p>Ingresá al módulo de Gestión de RRHH.</p>
 
-        <div class="notice" id="resumen">Listo.</div>
-
-        <hr class="sep" />
-
-        <div class="table-wrap">
-          <table id="tabla">
-            <thead>
-              <tr class="thead-blue">
-                <th class="sortable" data-order="id">ID</th>
-                <th class="sortable" data-order="fecha">Fecha entrada</th>
-                <th class="sortable" data-order="fecha_salida">Fecha salida</th>
-                <th class="sortable" data-order="legajo">Legajo</th>
-                <th class="sortable" data-order="nombre">Nombre</th>
-                <th class="sortable" data-order="sector">Sector</th>
-                <th class="sortable" data-order="puesto">Puesto</th>
-                <th class="sortable" data-order="entrada">Entrada</th>
-                <th class="sortable" data-order="salida">Salida</th>
-                <th class="sortable" data-order="horas">Horas</th>
-                <th class="sortable" data-order="nocturnas">Nocturnas</th>
-                <th>Acciones</th>
-              </tr>
-            </thead>
-            <tbody id="rows"></tbody>
-          </table>
+        <div class="home-hero__actions">
+          <a class="btn primary" href="/rrhh.html">Gestión RRHH</a>
+          <span class="home-hero__hint">Próximamente: tablero con últimos movimientos y novedades.</span>
         </div>
 
-        <p class="small" style="margin-top: 10px">
-          Tip: Si un turno noche queda “abierto”, no se guarda hasta completar
-          salida/fecha salida (se gestiona en “Jornadas Abiertas”).
-        </p>
+        <div class="home-hero__cards" aria-hidden="true">
+          <div class="home-mini-card">
+            <div class="home-mini-card__title">Últimos arqueos</div>
+            <div class="home-mini-card__value">—</div>
+          </div>
+          <div class="home-mini-card">
+            <div class="home-mini-card__title">Asistencias del día</div>
+            <div class="home-mini-card__value">—</div>
+          </div>
+          <div class="home-mini-card">
+            <div class="home-mini-card__title">Novedades</div>
+            <div class="home-mini-card__value">—</div>
+          </div>
+        </div>
       </section>
     </main>
-
-    <script src="sortable.js"></script>
-    <script src="importar.js"></script>
   </body>
 </html>

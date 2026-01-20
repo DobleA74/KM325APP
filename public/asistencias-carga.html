@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>KM325 RRHH – Carga de Asistencias</title>
+    <link rel="stylesheet" href="app.css" />
+    <link rel="icon" href="favicon.png" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <img
+          src="img/logo-gulf.png"
+          alt="Logo"
+          onerror="this.style.display='none'"
+        />
+        <div class="title">
+          <strong>KM325</strong>
+          <span>Gestión RRHH</span>
+        </div>
+      </div>
+      <nav class="nav">
+        <a href="/index.html">Inicio</a>
+        <a class="active" href="/rrhh.html">RRHH</a>
+      </nav>
+    </header>
+
+    <main class="container">
+      <section class="card">
+        <h1>Importar archivo Excel</h1>
+        <p>
+          Subí el .xlsx de fichadas. Ajustá entradas/salidas y confirmá para
+          guardar (sin duplicados).
+        </p>
+
+        <form id="form-excel" class="row">
+          <div class="field">
+            <label>Archivo</label>
+            <input type="file" id="archivo" accept=".xlsx" required />
+          </div>
+          <button class="btn primary" type="submit">Subir archivo</button>
+          <button class="btn ghost" id="btn-confirmar" type="button" disabled>
+            Confirmar y guardar
+          </button>
+        </form>
+
+        <div class="notice" id="resumen">Listo.</div>
+
+        <hr class="sep" />
+
+        <div class="table-wrap">
+          <table id="tabla">
+            <thead>
+              <tr class="thead-blue">
+                <th class="sortable" data-order="id">ID</th>
+                <th class="sortable" data-order="fecha">Fecha entrada</th>
+                <th class="sortable" data-order="fecha_salida">Fecha salida</th>
+                <th class="sortable" data-order="legajo">Legajo</th>
+                <th class="sortable" data-order="nombre">Nombre</th>
+                <th class="sortable" data-order="sector">Sector</th>
+                <th class="sortable" data-order="puesto">Puesto</th>
+                <th class="sortable" data-order="entrada">Entrada</th>
+                <th class="sortable" data-order="salida">Salida</th>
+                <th class="sortable" data-order="horas">Horas</th>
+                <th class="sortable" data-order="nocturnas">Nocturnas</th>
+                <th>Acciones</th>
+              </tr>
+            </thead>
+            <tbody id="rows"></tbody>
+          </table>
+        </div>
+
+        <p class="small" style="margin-top: 10px">
+          Tip: Si un turno noche queda “abierto”, no se guarda hasta completar
+          salida/fecha salida (se gestiona en “Jornadas Abiertas”).
+        </p>
+      </section>
+    </main>
+
+    <script src="sortable.js"></script>
+    <script src="importar.js"></script>
+  </body>
+</html>

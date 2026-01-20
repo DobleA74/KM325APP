@@ -1,28 +1,7 @@
-<!doctype html>
-<html lang="es">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>KM325 RRHH – Gestión Asistencias</title>
-  <link rel="stylesheet" href="app.css" />
-  <link rel="icon" href="favicon.png" />
-</head>
-<body>
-  <header class="topbar">
-    <div class="brand">
-      <img src="img/logo-gulf.png" alt="Logo" onerror="this.style.display='none'">
-      <div class="title">
-        <strong>KM325</strong>
-        <span>Gestión RRHH</span>
-      </div>
-    </div>
-    <nav class="nav">
-        <a href="/index.html">Inicio</a>
-        <a class="active" href="/rrhh.html">RRHH</a>
-      </nav>
-  </header>
+<%- include('../partials/document-start', { pageTitle }) %>
+<%- include('../partials/topbar', { topbarMode, subtitle: 'Gestión RRHH' }) %>
 
-  <main class="container">
+<main class="container">
     <section class="card">
       <h1>Gestión de asistencias</h1>
       <p>Histórico guardado en base. Filtrá, ordená, editá, exportá y eliminá.</p>
@@ -93,7 +72,7 @@
     </section>
   </main>
 
-  <!-- modal edición -->
+  <!-- modal edición (necesario para gestion.js) -->
   <div class="modal" id="modal">
     <div class="box">
       <h2>Editar asistencia</h2>
@@ -130,8 +109,8 @@
     </div>
   </div>
 
-  <script src="sortable.js"></script>
-<script src="gestion.js"></script>
+<%- include('../partials/footer') %>
 
-</body>
-</html>
+<script src="/sortable.js"></script>
+<script src="/gestion.js"></script>
+<%- include('../partials/document-end') %>

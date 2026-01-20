@@ -1,0 +1,27 @@
+<%- include('../partials/document-start', { pageTitle }) %>
+<%- include('../partials/topbar', { topbarMode, subtitle: 'Gestión RRHH' }) %>
+
+<main class="container">
+  <section class="card">
+    <h1>Módulo RRHH</h1>
+    <p>Elegí qué querés gestionar.</p>
+
+    <div class="grid2" style="gap:12px">
+      <a class="card" href="/asistencias" style="text-decoration:none; color:inherit">
+        <h2 style="margin-top:0">Asistencias</h2>
+        <p class="small">Carga diaria, jornadas abiertas y gestión de asistencias.</p>
+      </a>
+      <a class="card" href="/empleados" style="text-decoration:none; color:inherit">
+        <h2 style="margin-top:0">ABM Empleados</h2>
+        <p class="small">Altas, bajas y modificaciones de empleados.</p>
+      </a>
+      <a class="card" href="/arqueos" style="text-decoration:none; color:inherit">
+        <h2 style="margin-top:0">Arqueos</h2>
+        <p class="small">Carga de faltantes/sobrantes por turno (día vencido) y reparto editable.</p>
+      </a>
+    </div>
+  </section>
+</main>
+
+<%- include('../partials/footer') %>
+<%- include('../partials/document-end') %>
