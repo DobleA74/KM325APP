@@ -33,6 +33,16 @@ app.use(express.static(path.join(__dirname, 'public'), { index: false }));
 ================================ */
 const db = new sqlite3.Database("km325.db");
 
+// Promise helpers (para endpoints async)
+function allSql(sql, params = []) {
+  return new Promise((resolve, reject) => {
+    db.all(sql, params, (err, rows) => {
+      if (err) return reject(err);
+      resolve(rows || []);
+    });
+  });
+}
+
 // --- Simple migration helpers (idempotentes)
 function addColumnIfMissing(table, colName, colDefSql) {
   return new Promise((resolve) => {
@@ -418,6 +428,51 @@ db.serialize(() => {
   `);
 
   db.run(`CREATE INDEX IF NOT EXISTS idx_puesto_horarios_puesto ON puesto_horarios(puesto)`);
+
+  // ==========================
+  // CALENDARIO: patrones + excepciones
+  // ==========================
+  db.run(`
+    CREATE TABLE IF NOT EXISTS calendario_patrones (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      nombre TEXT NOT NULL,
+      ciclo_dias INTEGER NOT NULL,
+      creado_en TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS calendario_patron_detalle (
+      patron_id INTEGER NOT NULL,
+      dia_idx INTEGER NOT NULL,
+      turno TEXT NOT NULL, -- MANIANA/TARDE/NOCHE/FRANCO
+      puesto TEXT,         -- opcional (si es null, usa puesto del empleado)
+      PRIMARY KEY (patron_id, dia_idx)
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS calendario_empleado_patron (
+      legajo TEXT PRIMARY KEY,
+      patron_id INTEGER NOT NULL,
+      fecha_inicio TEXT NOT NULL
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS calendario_excepciones (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      legajo TEXT NOT NULL,
+      fecha TEXT NOT NULL, -- YYYY-MM-DD
+      tipo TEXT NOT NULL,  -- CAMBIO/VACACIONES/LICENCIA/PERMISO/ENFERMEDAD/FRANCO_EXTRA
+      puesto_override TEXT,
+      turno_override TEXT,
+      motivo TEXT,
+      creado_en TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
+  db.run(`CREATE INDEX IF NOT EXISTS idx_cal_ex_legajo_fecha ON calendario_excepciones(legajo, fecha)`);
 
   // Seed 2026 (idempotente: INSERT OR IGNORE)
   const feriados2026 = [
@@ -2026,4 +2081,451 @@ app.get('/api/liquidacion', (req, res) => {
 /* ===============================
    START
 ================================ */
+
+/* ===============================
+   CALENDARIO – API
+================================ */
+
+function daysBetween(a, b) {
+  const da = new Date(a + 'T00:00:00');
+  const dbb = new Date(b + 'T00:00:00');
+  const ms = dbb - da;
+  return Math.floor(ms / (24 * 3600 * 1000));
+}
+
+function addDays(dateStr, n) {
+  const d = new Date(dateStr + 'T00:00:00');
+  d.setDate(d.getDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+function turnoToHorario(puesto, turno) {
+  return new Promise((resolve) => {
+    if (!puesto || !turno || turno === 'FRANCO') return resolve({ inicio: null, fin: null });
+    db.get('SELECT * FROM puesto_horarios WHERE puesto = ?', [puesto], (err, row) => {
+      if (err || !row) return resolve({ inicio: null, fin: null });
+      if (turno === 'MANIANA') return resolve({ inicio: row.manana_start ?? null, fin: row.manana_end ?? null });
+      if (turno === 'TARDE') return resolve({ inicio: row.tarde_start ?? null, fin: row.tarde_end ?? null });
+      if (turno === 'NOCHE') return resolve({ inicio: row.noche_start ?? null, fin: row.noche_end ?? null });
+      return resolve({ inicio: null, fin: null });
+    });
+  });
+}
+
+// Patrones
+app.get('/api/patrones', (req, res) => {
+  db.all('SELECT * FROM calendario_patrones ORDER BY id DESC', (err, rows) => {
+    if (err) return res.status(500).json({ error: 'Error leyendo patrones' });
+    res.json(rows || []);
+  });
+});
+
+app.post('/api/patrones', (req, res) => {
+  const { nombre, ciclo_dias, detalle } = req.body || {};
+  if (!nombre || !ciclo_dias) return res.status(400).json({ error: 'Faltan datos (nombre, ciclo_dias)' });
+
+  db.run('INSERT INTO calendario_patrones (nombre, ciclo_dias) VALUES (?, ?)', [nombre, Number(ciclo_dias)], function (err) {
+    if (err) return res.status(500).json({ error: 'Error creando patrón' });
+    const patron_id = this.lastID;
+
+    if (Array.isArray(detalle) && detalle.length) {
+      const stmt = db.prepare('INSERT INTO calendario_patron_detalle (patron_id, dia_idx, turno, puesto) VALUES (?, ?, ?, ?)');
+      detalle.forEach((d) => {
+        stmt.run([patron_id, Number(d.dia_idx), String(d.turno || '').toUpperCase(), d.puesto || null]);
+      });
+      stmt.finalize(() => res.json({ ok: true, id: patron_id }));
+    } else {
+      db.run(
+        'INSERT INTO calendario_patron_detalle (patron_id, dia_idx, turno, puesto) VALUES (?, ?, ?, ?)',
+        [patron_id, 0, 'FRANCO', null],
+        () => res.json({ ok: true, id: patron_id })
+      );
+    }
+  });
+});
+
+// Asignación patrón empleado
+app.get('/api/empleados/:legajo/patron', (req, res) => {
+  const legajo = req.params.legajo;
+  db.get(
+    'SELECT ep.legajo, ep.patron_id, ep.fecha_inicio, p.nombre as patron_nombre, p.ciclo_dias FROM calendario_empleado_patron ep JOIN calendario_patrones p ON p.id = ep.patron_id WHERE ep.legajo = ?',
+    [legajo],
+    (err, row) => {
+      if (err) return res.status(500).json({ error: 'Error leyendo asignación' });
+      if (!row) return res.json({});
+      res.json(row);
+    }
+  );
+});
+
+app.put('/api/empleados/:legajo/patron', (req, res) => {
+  const legajo = req.params.legajo;
+  const { patron_id, fecha_inicio } = req.body || {};
+  if (!patron_id || !fecha_inicio) return res.status(400).json({ error: 'Faltan datos (patron_id, fecha_inicio)' });
+
+  db.get('SELECT id FROM calendario_patrones WHERE id = ?', [Number(patron_id)], (err, pRow) => {
+    if (err || !pRow) return res.status(400).json({ error: 'Patrón inexistente' });
+    db.run(
+      "INSERT INTO calendario_empleado_patron (legajo, patron_id, fecha_inicio) VALUES (?, ?, ?) ON CONFLICT(legajo) DO UPDATE SET patron_id=excluded.patron_id, fecha_inicio=excluded.fecha_inicio",
+      [legajo, Number(patron_id), fecha_inicio],
+      (err2) => {
+        if (err2) return res.status(500).json({ error: 'Error guardando asignación' });
+        res.json({ ok: true });
+      }
+    );
+  });
+});
+
+// Excepciones (upsert por legajo+fecha)
+app.post('/api/calendario/excepciones', (req, res) => {
+  const { legajo, fecha, tipo, puesto_override, turno_override, motivo } = req.body || {};
+  if (!legajo || !fecha || !tipo) return res.status(400).json({ error: 'Faltan datos (legajo, fecha, tipo)' });
+
+  db.get('SELECT id FROM calendario_excepciones WHERE legajo=? AND fecha=?', [legajo, fecha], (err, row) => {
+    if (err) return res.status(500).json({ error: 'Error leyendo excepción' });
+
+    const fields = [tipo, puesto_override || null, turno_override || null, motivo || null, legajo, fecha];
+    if (row?.id) {
+      db.run(
+        'UPDATE calendario_excepciones SET tipo=?, puesto_override=?, turno_override=?, motivo=? WHERE legajo=? AND fecha=?',
+        fields,
+        (err2) => {
+          if (err2) return res.status(500).json({ error: 'Error actualizando excepción' });
+          res.json({ ok: true, id: row.id });
+        }
+      );
+    } else {
+      db.run(
+        'INSERT INTO calendario_excepciones (tipo, puesto_override, turno_override, motivo, legajo, fecha) VALUES (?, ?, ?, ?, ?, ?)',
+        fields,
+        function (err2) {
+          if (err2) return res.status(500).json({ error: 'Error creando excepción' });
+          res.json({ ok: true, id: this.lastID });
+        }
+      );
+    }
+  });
+});
+
+app.delete('/api/calendario/excepciones/:id', (req, res) => {
+  const id = Number(req.params.id);
+  db.run('DELETE FROM calendario_excepciones WHERE id = ?', [id], function (err) {
+    if (err) return res.status(500).json({ error: 'Error eliminando excepción' });
+    res.json({ ok: true });
+  });
+});
+
+// Calendario resuelto
+app.get('/api/calendario/resuelto', async (req, res) => {
+  const { legajo, desde, hasta } = req.query || {};
+  if (!legajo || !desde || !hasta) return res.status(400).json({ error: 'Faltan parámetros (legajo, desde, hasta)' });
+
+  try {
+    const emp = await allSql('SELECT * FROM empleados WHERE legajo = ?', [legajo]);
+    if (!emp.length) return res.status(404).json({ error: 'Legajo inexistente' });
+    const empleado = emp[0];
+
+    const asign = await allSql('SELECT * FROM calendario_empleado_patron WHERE legajo = ?', [legajo]);
+    const excepciones = await allSql(
+      'SELECT * FROM calendario_excepciones WHERE legajo=? AND fecha BETWEEN ? AND ? ORDER BY fecha',
+      [legajo, desde, hasta]
+    );
+    const exMap = new Map(excepciones.map((x) => [x.fecha, x]));
+
+    let patron = null;
+    let detalleMap = new Map();
+    if (asign.length) {
+      patron = (await allSql('SELECT * FROM calendario_patrones WHERE id = ?', [asign[0].patron_id]))[0] || null;
+      const det = await allSql('SELECT * FROM calendario_patron_detalle WHERE patron_id = ? ORDER BY dia_idx', [asign[0].patron_id]);
+      detalleMap = new Map(det.map((d) => [Number(d.dia_idx), d]));
+    }
+
+    const dias = [];
+    let curDate = desde;
+    while (curDate <= hasta) {
+      const ex = exMap.get(curDate);
+      let fuente = '';
+      let turno = '';
+      let puesto = '';
+      let excepcion_id = null;
+
+      if (ex) {
+        fuente = 'Excepción';
+        excepcion_id = ex.id;
+        turno = ex.turno_override ? String(ex.turno_override).toUpperCase() : '';
+        puesto = ex.puesto_override || empleado.puesto || '';
+        if (!turno) {
+          if (['VACACIONES', 'LICENCIA', 'PERMISO', 'ENFERMEDAD'].includes(String(ex.tipo).toUpperCase())) turno = 'AUSENCIA';
+        }
+        if (String(ex.tipo).toUpperCase() === 'FRANCO_EXTRA' && !turno) turno = 'FRANCO';
+      } else if (patron && asign.length) {
+        fuente = 'Patrón';
+        const diff = daysBetween(asign[0].fecha_inicio, curDate);
+        const idx = ((diff % patron.ciclo_dias) + patron.ciclo_dias) % patron.ciclo_dias;
+        const d = detalleMap.get(idx);
+        turno = d ? String(d.turno).toUpperCase() : 'FRANCO';
+        puesto = d && d.puesto ? d.puesto : (empleado.puesto || '');
+      } else {
+        fuente = 'Sin patrón';
+        turno = '';
+        puesto = empleado.puesto || '';
+      }
+
+      let hora_inicio_min = null;
+      let hora_fin_min = null;
+      if (['MANIANA', 'TARDE', 'NOCHE', 'FRANCO'].includes(turno)) {
+        const h = await turnoToHorario(puesto, turno);
+        hora_inicio_min = h.inicio;
+        hora_fin_min = h.fin;
+      }
+
+      dias.push({
+        fecha: curDate,
+        puesto,
+        turno,
+        hora_inicio_min,
+        hora_fin_min,
+        fuente,
+        excepcion_id,
+        excepcion: ex
+          ? {
+              id: ex.id,
+              tipo: ex.tipo,
+              puesto_override: ex.puesto_override,
+              turno_override: ex.turno_override ? String(ex.turno_override).toUpperCase() : '',
+              motivo: ex.motivo,
+            }
+          : null,
+      });
+
+      curDate = addDays(curDate, 1);
+    }
+
+    res.json({ ok: true, dias });
+
+// Calendario mensual para grilla (todos los empleados)
+// Devuelve items: { fecha, sector, puesto, turno, horario, legajo, nombre }
+app.get('/api/calendario/resuelto-mes', async (req, res) => {
+  const { desde, hasta } = req.query || {};
+  if (!desde || !hasta) return res.status(400).send('Faltan parametros desde/hasta');
+
+  function normSectorForGrid(sector) {
+    const g = sectorGroup(sector);
+    if (g === 'shop') return 'MINI';
+    if (g === 'playa') return 'PLAYA';
+    // fallback: si es algo raro, lo mandamos a PLAYA para no perderlo
+    return 'PLAYA';
+  }
+
+  function normPuestoForGrid(puesto) {
+    const p = String(puesto || '').toLowerCase().trim();
+    if (!p) return '';
+    if (p.includes('playero')) return 'Playero/a';
+    if (p.includes('auxiliar') && p.includes('playa')) return 'Auxiliar de playa';
+    if (p.includes('refuerzo') && p.includes('playa')) return 'Refuerzo de playa';
+    if (p.includes('cajer')) return 'Cajero/a';
+    if (p.includes('auxiliar') && (p.includes('shop') || p.includes('caja'))) return 'Auxiliar de shop';
+    return puesto;
+  }
+
+  function turnoLetter(turnoUpper) {
+    const t = String(turnoUpper || '').toUpperCase();
+    if (t === 'MANIANA') return 'M';
+    if (t === 'TARDE') return 'T';
+    if (t === 'NOCHE') return 'N';
+    return '';
+  }
+
+  async function horarioKeyFor(puesto, turnoUpper) {
+    const t = String(turnoUpper || '').toUpperCase();
+    if (!puesto || !t) return '';
+    if (!['MANIANA','TARDE','NOCHE'].includes(t)) return '';
+
+    const h = await turnoToHorario(puesto, t);
+    if (h.inicio == null || h.fin == null) return '';
+    const ini = minToHHMM(h.inicio);
+    const fin = minToHHMM(h.fin);
+    return `${ini}-${fin}`;
+  }
+
+  async function resolveForEmpleado(empleado) {
+    const legajo = normLegajo(empleado.legajo);
+    if (!legajo) return [];
+
+    const asign = await allSql('SELECT * FROM calendario_empleado_patron WHERE legajo = ?', [legajo]);
+    const excepciones = await allSql(
+      'SELECT * FROM calendario_excepciones WHERE legajo=? AND fecha BETWEEN ? AND ? ORDER BY fecha',
+      [legajo, desde, hasta]
+    );
+    const exMap = new Map(excepciones.map((x) => [x.fecha, x]));
+
+    let patron = null;
+    let detalleMap = new Map();
+    if (asign.length) {
+      patron = (await allSql('SELECT * FROM calendario_patrones WHERE id = ?', [asign[0].patron_id]))[0] || null;
+      const det = await allSql('SELECT * FROM calendario_patron_detalle WHERE patron_id = ? ORDER BY dia_idx', [asign[0].patron_id]);
+      detalleMap = new Map(det.map((d) => [Number(d.dia_idx), d]));
+    }
+
+    const out = [];
+    let curDate = desde;
+    while (curDate <= hasta) {
+      const ex = exMap.get(curDate);
+      let turno = '';
+      let puesto = '';
+
+      if (ex) {
+        turno = ex.turno_override ? String(ex.turno_override).toUpperCase() : '';
+        puesto = ex.puesto_override || empleado.puesto || '';
+        if (!turno) {
+          const tipo = String(ex.tipo || '').toUpperCase();
+          if (['VACACIONES','LICENCIA','PERMISO','ENFERMEDAD'].includes(tipo)) turno = 'AUSENCIA';
+          if (tipo === 'FRANCO_EXTRA') turno = 'FRANCO';
+        }
+      } else if (patron && asign.length) {
+        const diff = daysBetween(asign[0].fecha_inicio, curDate);
+        const idx = ((diff % patron.ciclo_dias) + patron.ciclo_dias) % patron.ciclo_dias;
+        const d = detalleMap.get(idx);
+        turno = d ? String(d.turno).toUpperCase() : 'FRANCO';
+        puesto = d && d.puesto ? d.puesto : (empleado.puesto || '');
+      } else {
+        // sin patrón: celda vacía
+        turno = '';
+        puesto = empleado.puesto || '';
+      }
+
+      const letra = turnoLetter(turno);
+      if (letra) {
+        const puestoGrid = normPuestoForGrid(puesto);
+        const horario = await horarioKeyFor(puestoGrid, turno);
+        out.push({
+          fecha: curDate,
+          sector: normSectorForGrid(empleado.sector),
+          puesto: puestoGrid,
+          turno: letra,
+          horario,
+          legajo,
+          nombre: empleado.nombre || '',
+        });
+      }
+
+      curDate = addDays(curDate, 1);
+    }
+
+    return out;
+  }
+
+  try {
+    const empleados = await allSql('SELECT legajo, nombre, puesto, sector FROM empleados WHERE activo=1 ORDER BY nombre');
+    const salida = [];
+    for (const emp of empleados) {
+      const items = await resolveForEmpleado(emp);
+      salida.push(...items);
+    }
+    res.json(salida);
+  } catch (e) {
+    console.error(e);
+    res.status(500).send(e.message || 'Error generando calendario mensual');
+  }
+});
+
+  } catch (e) {
+    res.status(500).json({ error: 'Error generando calendario' });
+  }
+});
+
+
+
+// // Seed / actualización de patrones base (idempotente por NOMBRE)
+// Nota: si ya existen con el mismo nombre pero tenían el ciclo/orden mal, se corrigen.
+function ensurePatron(nombre, ciclo_dias, detalle) {
+  return new Promise((resolve) => {
+    db.get('SELECT id FROM calendario_patrones WHERE nombre=?', [nombre], (err, row) => {
+      if (err) return resolve();
+      const upsertHeader = (id) => {
+        db.run('UPDATE calendario_patrones SET ciclo_dias=? WHERE id=?', [Number(ciclo_dias), id], () => {
+          db.run('DELETE FROM calendario_patron_detalle WHERE patron_id=?', [id], () => {
+            const stmt = db.prepare('INSERT INTO calendario_patron_detalle (patron_id, dia_idx, turno, puesto) VALUES (?,?,?,?)');
+            (detalle || []).forEach((d) => {
+              stmt.run([id, Number(d.dia_idx), String(d.turno || '').toUpperCase(), d.puesto || null]);
+            });
+            stmt.finalize(() => resolve());
+          });
+        });
+      };
+
+      if (row?.id) return upsertHeader(row.id);
+
+      db.run('INSERT INTO calendario_patrones (nombre, ciclo_dias) VALUES (?, ?)', [nombre, Number(ciclo_dias)], function (err2) {
+        if (err2) return resolve();
+        upsertHeader(this.lastID);
+      });
+    });
+  });
+}
+
+(async () => {
+  try {
+    await ensurePatron('Fijo Mañana (trabaja)', 1, [
+      { dia_idx: 0, turno: 'MANIANA', puesto: null },
+    ]);
+
+    // PLAYEROS: 5xM + 1F - 5xT + 1F - 5xN + 3F  (20 días)
+    await ensurePatron('Playero/a — 5M+1F+5T+1F+5N+3F (20d)', 20, [
+      ...Array.from({ length: 5 }).map((_, i) => ({ dia_idx: i, turno: 'MANIANA', puesto: null })),
+      { dia_idx: 5, turno: 'FRANCO', puesto: null },
+      ...Array.from({ length: 5 }).map((_, i) => ({ dia_idx: 6 + i, turno: 'TARDE', puesto: null })),
+      { dia_idx: 11, turno: 'FRANCO', puesto: null },
+      ...Array.from({ length: 5 }).map((_, i) => ({ dia_idx: 12 + i, turno: 'NOCHE', puesto: null })),
+      { dia_idx: 17, turno: 'FRANCO', puesto: null },
+      { dia_idx: 18, turno: 'FRANCO', puesto: null },
+      { dia_idx: 19, turno: 'FRANCO', puesto: null },
+    ]);
+
+    // CAJERO SHOP: 4xM + 2F - 4xT + 2F  (12 días)
+    await ensurePatron('Cajero/a — 4M+2F+4T+2F (12d)', 12, [
+      ...Array.from({ length: 4 }).map((_, i) => ({ dia_idx: i, turno: 'MANIANA', puesto: null })),
+      { dia_idx: 4, turno: 'FRANCO', puesto: null },
+      { dia_idx: 5, turno: 'FRANCO', puesto: null },
+      ...Array.from({ length: 4 }).map((_, i) => ({ dia_idx: 6 + i, turno: 'TARDE', puesto: null })),
+      { dia_idx: 10, turno: 'FRANCO', puesto: null },
+      { dia_idx: 11, turno: 'FRANCO', puesto: null },
+    ]);
+
+    // AUXILIAR DE PLAYA: base L-V fijo; fines de semana se gestionan con EXCEPCIONES (rotación manual)
+    await ensurePatron('Auxiliar de playa — L a V Mañana + finde manual (7d)', 7, [
+      { dia_idx: 0, turno: 'MANIANA', puesto: null }, // L
+      { dia_idx: 1, turno: 'MANIANA', puesto: null }, // M
+      { dia_idx: 2, turno: 'MANIANA', puesto: null }, // X
+      { dia_idx: 3, turno: 'MANIANA', puesto: null }, // J
+      { dia_idx: 4, turno: 'MANIANA', puesto: null }, // V
+      { dia_idx: 5, turno: 'FRANCO', puesto: null },  // S (manual)
+      { dia_idx: 6, turno: 'FRANCO', puesto: null },  // D (manual)
+    ]);
+
+    await ensurePatron('Auxiliar de playa — L a V Tarde + finde manual (7d)', 7, [
+      { dia_idx: 0, turno: 'TARDE', puesto: null }, // L
+      { dia_idx: 1, turno: 'TARDE', puesto: null }, // M
+      { dia_idx: 2, turno: 'TARDE', puesto: null }, // X
+      { dia_idx: 3, turno: 'TARDE', puesto: null }, // J
+      { dia_idx: 4, turno: 'TARDE', puesto: null }, // V
+      { dia_idx: 5, turno: 'FRANCO', puesto: null }, // S (manual)
+      { dia_idx: 6, turno: 'FRANCO', puesto: null }, // D (manual)
+    ]);
+
+    // AUXILIAR SHOP: siempre L-V mañana (6-14); fines de semana vacío
+    await ensurePatron('Auxiliar de shop — L a V Mañana fijo (7d)', 7, [
+      { dia_idx: 0, turno: 'MANIANA', puesto: null },
+      { dia_idx: 1, turno: 'MANIANA', puesto: null },
+      { dia_idx: 2, turno: 'MANIANA', puesto: null },
+      { dia_idx: 3, turno: 'MANIANA', puesto: null },
+      { dia_idx: 4, turno: 'MANIANA', puesto: null },
+      { dia_idx: 5, turno: 'FRANCO', puesto: null },
+      { dia_idx: 6, turno: 'FRANCO', puesto: null },
+    ]);
+  } catch (e) {
+    // no tirar abajo el server por seed
+    console.error('Seed patrones: ', e?.message || e);
+  }
+})();
 app.listen(PORT, () => console.log(`✅ KM325 corriendo en http://localhost:${PORT}`));

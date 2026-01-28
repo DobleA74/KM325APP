@@ -780,3 +780,40 @@ body.home{ background:#0b1b3d; }
 body{
   padding-bottom: 58px;
 }
+
+
+/* Calendar grid chips */
+.chip{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  padding:6px 10px;
+  border-radius:999px;
+  border:1px solid rgba(2,6,23,.12);
+  background:#fff;
+  font-weight:700;
+  font-size:12px;
+  cursor:pointer;
+  margin:3px 2px;
+}
+.chip:hover{ box-shadow: 0 8px 20px rgba(2,6,23,.10); }
+.chip.secondary{ font-weight:600; }
+.modal-actions{
+  display:flex;
+  gap:10px;
+  justify-content:flex-end;
+  align-items:center;
+  margin-top:14px;
+}
+.badge{
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+  padding:6px 10px;
+  border-radius:999px;
+  border:1px solid rgba(2,6,23,.12);
+  background:#f8fafc;
+  font-size:12px;
+  font-weight:700;
+  color:#0f172a;
+}

@@ -56,7 +56,7 @@ function badgeHtml(estado) {
   if (estado === "ABRIR_ABIERTA") return `<span class="badge warn">ABIERTA</span>`;
   if (estado === "CERRAR_ANTERIOR") return `<span class="badge info">CIERRA ANTERIOR</span>`;
   if (estado === "NORMAL") return `<span class="badge ok">NORMAL</span>`;
-  return `<span class="badge">IGNORAR</span>`;
+  return `<span class="badge">PENDIENTE</span>`;
 }
 
 /* ==========================
@@ -179,7 +179,7 @@ function computeEstado(r) {
     return hayAbiertaAnterior(r.legajo, r.fecha) ? "CERRAR_ANTERIOR" : "ABRIR_ABIERTA";
   }
 
-  if (igual) return "IGNORAR";
+  if (igual) return "PENDIENTE";
   return "NORMAL";
 }
 

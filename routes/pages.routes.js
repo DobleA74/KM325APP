@@ -15,6 +15,11 @@ router.get('/asistencias/gestion', pages.gestionAsistencias);
 router.get('/empleados', pages.abmEmpleados);
 router.get('/arqueos', pages.arqueos);
 
+// Calendario de turnos
+router.get('/calendario', pages.calendarioGrid);
+router.get('/calendario/patrones', pages.calendario);
+
+
 // Liquidación (nuevo)
 router.get('/liquidacion', pages.liquidacion);
 router.get('/liquidacion/tardanzas', pages.liquidacionTardanzas);
@@ -31,5 +36,6 @@ router.get('/gestion-asistencias.html', (req, res) => res.redirect('/asistencias
 router.get('/abm-empleados.html', (req, res) => res.redirect('/empleados'));
 router.get('/arqueos.html', (req, res) => res.redirect('/arqueos'));
 router.get('/liquidacion.html', (req, res) => res.redirect('/liquidacion'));
+router.get('/calendario.html', (req, res) => res.redirect('/calendario'));
 
 module.exports = router;

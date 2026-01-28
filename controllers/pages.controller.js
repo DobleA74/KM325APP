@@ -56,6 +56,23 @@ exports.arqueos = (req, res) => {
   });
 };
 
+// Calendario
+// /calendario -> grilla mensual tipo Excel (PLAYA / SHOP)
+exports.calendarioGrid = (req, res) => {
+  res.render('pages/calendario-grid', {
+    pageTitle: 'KM325 RRHH – Calendario (grilla)',
+    topbarMode: 'internal',
+  });
+};
+
+// /calendario/patrones -> pantalla de patrones + excepciones (detalle por empleado)
+exports.calendario = (req, res) => {
+  res.render('pages/calendario', {
+    pageTitle: 'KM325 RRHH – Calendario (patrones)',
+    topbarMode: 'internal',
+  });
+};
+
 // Liquidación
 exports.liquidacion = (req, res) => {
   res.render('pages/liquidacion', {
