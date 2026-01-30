@@ -55,7 +55,7 @@
 
       <div class="field" style="min-width:160px;">
         <label>Fecha</label>
-        <input id="ex_fecha" type="date" />
+        <input id="ex_fecha" type="date" disabled />
       </div>
 
       <div class="field" style="min-width:220px;">
@@ -66,13 +66,14 @@
           <option value="VACACIONES">Vacaciones</option>
           <option value="LICENCIA">Licencia</option>
           <option value="ENFERMEDAD">Enfermedad</option>
+              <option value="FALTA_FICHADA">Falta de fichada</option>
           <option value="PERMISO">Permiso</option>
         </select>
       </div>
 
       <div class="field" style="min-width:220px; flex:1;">
         <label>Puesto (opcional)</label>
-        <input id="ex_puesto" placeholder="Ej: Playero/a" />
+        <select id="ex_puesto"><option value="">(sin cambio)</option></select>
       </div>
 
       <div class="field" style="min-width:220px;">

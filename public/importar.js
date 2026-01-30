@@ -5,6 +5,91 @@ const inputArchivo = document.getElementById("archivo");
 const resumen = document.getElementById("resumen");
 const tbody = document.getElementById("rows");
 const btnConfirmar = document.getElementById("btn-confirmar");
+
+// Modal Falta de fichada
+const modalFalta = document.getElementById("modal-falta-fichada");
+const faltaList = document.getElementById("falta-fichada-list");
+const btnFaltaCerrar = document.getElementById("btn-falta-cerrar");
+const btnFaltaRRHH = document.getElementById("btn-falta-rrhh");
+const btnFaltaRegularizar = document.getElementById("btn-falta-regularizar");
+
+let faltasPendientes = [];
+
+function openFaltaModal(faltas){
+  faltasPendientes = Array.isArray(faltas) ? faltas : [];
+  if(!modalFalta || !faltaList) return;
+
+  if(!faltasPendientes.length){
+    modalFalta.classList.remove('open');
+    return;
+  }
+
+  faltaList.innerHTML = faltasPendientes.map(f => {
+    const fecha = f.fecha || '';
+    const count = f.count || (f.empleados||[]).length || 0;
+    const emps = (f.empleados || []).map(e => `${escapeHtml(e.nombre || '')} <span class="small">(${escapeHtml(e.legajo || '')})</span>`).join('<br/>');
+    return `<div style="padding:10px 12px; border:1px solid #e5e7eb; border-radius:12px; margin-bottom:10px;">
+      <div style="font-weight:700; margin-bottom:6px;">${escapeHtml(fecha)} — ${count} empleado(s)</div>
+      <div class="small">${emps || '—'}</div>
+    </div>`;
+  }).join('');
+
+  modalFalta.classList.add('open');
+}
+
+if(btnFaltaCerrar){
+  btnFaltaCerrar.addEventListener('click', () => {
+    if(modalFalta) modalFalta.classList.remove('open');
+    faltasPendientes = [];
+  });
+}
+
+
+if(btnFaltaRegularizar){
+  btnFaltaRegularizar.addEventListener('click', () => {
+    if(!faltasPendientes.length) return;
+
+    // Guardamos en localStorage para abrir Jornadas abiertas con los casos ya listados
+    try{
+      localStorage.setItem('km325_faltas_pendientes', JSON.stringify(faltasPendientes));
+    }catch(e){}
+
+    // Ir a la pantalla donde se puede crear/editar/cerrar manualmente
+    window.location.href = '/asistencias/jornadas?from=faltas';
+  });
+}
+
+if(btnFaltaRRHH){
+  btnFaltaRRHH.addEventListener('click', async () => {
+    if(!faltasPendientes.length) return;
+
+    const payload = {
+      faltas: faltasPendientes.map(f => ({
+        fecha: f.fecha,
+        legajos: (f.empleados||[]).map(e => e.legajo).filter(Boolean),
+      }))
+    };
+
+    btnFaltaRRHH.disabled = true;
+    try{
+      const r = await fetch('/api/novedades/falta-fichada', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify(payload)
+      });
+      const data = await r.json().catch(() => ({}));
+      if(!r.ok || !data.ok) throw new Error(data.error || 'No se pudo registrar');
+
+      alert(`Marcado como ausencia en novedades RRHH: ${data.insertados} (ignorados: ${data.ignorados})`);
+      if(modalFalta) modalFalta.classList.remove('open');
+      faltasPendientes = [];
+    }catch(e){
+      alert(e.message || 'Error registrando ausencia');
+    }finally{
+      btnFaltaRRHH.disabled = false;
+    }
+  });
+}
 const tabla = document.getElementById("tabla");
 
 let registros = [];
@@ -31,7 +116,7 @@ function esTemprano(hhmm) {
 }
 
 const PUESTOS_POR_SECTOR = {
-  PLAYA: ["Playero/a", "Auxiliar de playa"],
+  PLAYA: ["Playero/a", "Auxiliar de playa", "Refuerzo de playa"],
   MINI: ["Cajero/a", "Auxiliar de shop"],
   "ADMINISTRACIÓN": ["Encargado"],
 };
@@ -440,6 +525,10 @@ btnConfirmar.addEventListener("click", async () => {
         `Abiertas creadas: ${data.abiertas_creadas}\n` +
         `Abiertas cerradas: ${data.abiertas_cerradas}\n`
     );
+
+    if (data.faltas_fichada_total && data.faltas_fichada_total > 0) {
+      openFaltaModal(data.faltas_fichada);
+    }
 
     registros = [];
     registros.__originales = 0;

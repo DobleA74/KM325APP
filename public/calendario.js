@@ -42,7 +42,24 @@
     return `${h}:${m}`;
   }
 
-  async function loadEmpleados(){
+  
+  async function loadPuestos(){
+    try{
+      const r = await fetch('/api/puestos');
+      const data = await r.json();
+      const items = (data && data.items) ? data.items : [];
+      // items puede venir como [{puesto,...}] o como strings
+      const puestos = items.map(x => (typeof x === 'string' ? x : x.puesto)).filter(Boolean);
+
+      // llenar select de Puesto en modal de Excepción
+      exPuesto.innerHTML = '<option value="">(sin cambio)</option>' + puestos.map(p=>`<option value="${p}">${p}</option>`).join('');
+    }catch(e){
+      // si falla, dejar el select como está
+      console.warn('No se pudo cargar puestos', e);
+    }
+  }
+
+async function loadEmpleados(){
     const r = await fetch('/api/empleados');
     const data = await r.json();
     empleadoSel.innerHTML = '<option value="">(seleccionar)</option>' + data.map(e=>`<option value="${e.legajo}">${e.legajo} – ${e.nombre} (${e.puesto || 's/puesto'})</option>`).join('');
@@ -67,16 +84,30 @@
     const legajo = empleadoSel.value;
     patronInfo.textContent = '';
     if(!legajo){ patronSel.value=''; inicioPatronInp.value=''; return; }
-    const r = await fetch(`/api/empleados/${encodeURIComponent(legajo)}/patron`);
+    // Cargamos patrón efectivo (empleado o puesto) para que lo de arriba sea consistente con Configuración avanzada.
+    const r = await fetch(`/api/empleados/${encodeURIComponent(legajo)}/patron-efectivo`);
     const data = await r.json();
-    if(data && data.patron_id){
-      patronSel.value = String(data.patron_id);
-      inicioPatronInp.value = data.fecha_inicio || '';
-      patronInfo.textContent = `Asignado: ${data.patron_nombre} (desde ${data.fecha_inicio})`;
+
+    if (data && data.patron_id) {
+      const fuente = String(data.fuente || '').toUpperCase();
+
+      // Solo llenamos los inputs de arriba si ES un override por empleado.
+      if (fuente === 'EMPLEADO') {
+        patronSel.value = String(data.patron_id);
+        inicioPatronInp.value = data.fecha_inicio || '';
+        patronInfo.textContent = `Patrón efectivo: ${data.patron_nombre} (override del empleado, desde ${data.fecha_inicio})`;
+      } else {
+        // Mostramos el mismo patrón que viene por puesto para no confundir,
+        // pero el botón "Guardar override" recién crea el override a nivel empleado.
+        patronSel.value = String(data.patron_id);
+        inicioPatronInp.value = data.fecha_inicio || '';
+        const puesto = data.puesto ? ` — Puesto: ${data.puesto}` : '';
+        patronInfo.textContent = `Patrón efectivo: ${data.patron_nombre} (por configuración avanzada${puesto}). Si cambiás y guardás acá, creás un override SOLO para este empleado.`;
+      }
     } else {
       patronSel.value = '';
       inicioPatronInp.value = '';
-      patronInfo.textContent = 'Este empleado no tiene patrón asignado.';
+      patronInfo.textContent = 'Este empleado no tiene patrón efectivo (ni override ni patrón por puesto).';
     }
   }
 
@@ -217,5 +248,6 @@
   // init
   defaultRange();
   await loadEmpleados();
+  await loadPuestos();
   await loadPatrones();
 })();

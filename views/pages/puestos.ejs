@@ -1,0 +1,75 @@
+<%- include('../partials/document-start', { pageTitle }) %>
+<%- include('../partials/topbar', { topbarMode, subtitle: 'Gestión RRHH' }) %>
+
+<main class="container">
+  <section class="card">
+    <h1>Puestos</h1>
+    <p>Administrá horarios reales por puesto. Estos horarios se usan en calendario (grilla/patrones) y en tardanzas.</p>
+
+    <div class="row">
+      <div class="field" style="min-width:240px">
+        <label>Puesto</label>
+        <input id="puesto" placeholder="Ej: Playero/a" />
+      </div>
+
+      <div class="field">
+        <label>Mañana (inicio)</label>
+        <input id="m_ini" type="time" />
+      </div>
+      <div class="field">
+        <label>Mañana (fin)</label>
+        <input id="m_fin" type="time" />
+      </div>
+
+      <div class="field">
+        <label>Tarde (inicio)</label>
+        <input id="t_ini" type="time" />
+      </div>
+      <div class="field">
+        <label>Tarde (fin)</label>
+        <input id="t_fin" type="time" />
+      </div>
+
+      <div class="field">
+        <label>Noche (inicio)</label>
+        <input id="n_ini" type="time" />
+      </div>
+      <div class="field">
+        <label>Noche (fin)</label>
+        <input id="n_fin" type="time" />
+      </div>
+
+      <button class="btn primary" id="btn-guardar">Guardar / Actualizar</button>
+      <button class="btn ghost" id="btn-limpiar" type="button">Limpiar</button>
+    </div>
+
+    <p class="small tip">
+      Nota: si el fin de noche es menor o igual al inicio, se interpreta que cruza medianoche (ej. 21:00 a 05:00).
+    </p>
+
+    <hr class="sep" />
+
+    <div class="table-wrap">
+      <table id="tabla-puestos">
+        <thead>
+          <tr class="thead-blue">
+            <th class="sortable" data-order="puesto">Puesto</th>
+            <th class="sortable" data-order="manana">Mañana</th>
+            <th class="sortable" data-order="tarde">Tarde</th>
+            <th class="sortable" data-order="noche">Noche</th>
+            <th>Acciones</th>
+          </tr>
+        </thead>
+        <tbody id="puestos-body"></tbody>
+      </table>
+    </div>
+
+    <div class="notice" id="msg">Listo.</div>
+  </section>
+</main>
+
+<%- include('../partials/footer') %>
+
+<script src="/sortable.js"></script>
+<script src="/puestos.js"></script>
+<%- include('../partials/document-end') %>

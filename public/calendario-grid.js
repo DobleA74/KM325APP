@@ -44,23 +44,59 @@ function buildWeeks(first, last){
   return weeks;
 }
 
-// Filas fijas tipo Excel (tu diseño)
-const ROWS_PLAYA = [
-  { label:"MAÑANA (5 a 13)", sector:"PLAYA", puesto:"Playero/a", turno:"M", horaKey:"05:00-13:00" },
-  { label:"MAÑANA (6 a 14)", sector:"PLAYA", puesto:"Auxiliar de playa", turno:"M", horaKey:"06:00-14:00" },
-  { label:"TARDE (13 a 21)", sector:"PLAYA", puesto:"Playero/a", turno:"T", horaKey:"13:00-21:00" },
-  { label:"TARDE (14 a 22)", sector:"PLAYA", puesto:"Auxiliar de playa", turno:"T", horaKey:"14:00-22:00" },
-  { label:"NOCHE (21 a 5)", sector:"PLAYA", puesto:"Playero/a", turno:"N", horaKey:"21:00-05:00" },
-  // Refuerzo (solo si hay excepciones o asignaciones futuras)
-  { label:"REFUERZO (9 a 13)", sector:"PLAYA", puesto:"Refuerzo de playa", turno:"M", horaKey:"09:00-13:00" },
-  { label:"REFUERZO (17 a 21)", sector:"PLAYA", puesto:"Refuerzo de playa", turno:"T", horaKey:"17:00-21:00" },
+// Filas tipo Excel (dinámicas desde puesto_horarios)
+// Cada fila se "matchea" por: sector + puesto + turno(M/T/N) + horario(HH:MM-HH:MM)
+const BASE_ROWS_PLAYA = [
+  { labelPrefix:"MAÑANA", sector:"PLAYA", puesto:"Playero/a", turno:"M", defaultRange:"05:00-13:00" },
+  { labelPrefix:"MAÑANA", sector:"PLAYA", puesto:"Auxiliar de playa", turno:"M", defaultRange:"06:00-14:00" },
+  { labelPrefix:"TARDE",  sector:"PLAYA", puesto:"Playero/a", turno:"T", defaultRange:"13:00-21:00" },
+  { labelPrefix:"TARDE",  sector:"PLAYA", puesto:"Auxiliar de playa", turno:"T", defaultRange:"14:00-22:00" },
+  { labelPrefix:"NOCHE",  sector:"PLAYA", puesto:"Playero/a", turno:"N", defaultRange:"21:00-05:00" },
+  { labelPrefix:"REFUERZO", sector:"PLAYA", puesto:"Refuerzo de playa", turno:"M", defaultRange:"09:00-13:00" },
+  { labelPrefix:"REFUERZO", sector:"PLAYA", puesto:"Refuerzo de playa", turno:"T", defaultRange:"17:00-21:00" },
 ];
 
-const ROWS_SHOP = [
-  { label:"MAÑANA (6 a 14)", sector:"MINI", puesto:"Cajero/a", turno:"M", horaKey:"06:00-14:00" },
-  { label:"TARDE (14 a 22)", sector:"MINI", puesto:"Cajero/a", turno:"T", horaKey:"14:00-22:00" },
-  { label:"AUX SHOP (6 a 14)", sector:"MINI", puesto:"Auxiliar de shop", turno:"M", horaKey:"06:00-14:00", onlyMonFri:true },
+const BASE_ROWS_SHOP = [
+  { labelPrefix:"MAÑANA", sector:"MINI", puesto:"Cajero/a", turno:"M", defaultRange:"06:00-14:00" },
+  { labelPrefix:"TARDE",  sector:"MINI", puesto:"Cajero/a", turno:"T", defaultRange:"14:00-22:00" },
+  { labelPrefix:"AUX SHOP", sector:"MINI", puesto:"Auxiliar de shop", turno:"M", defaultRange:"06:00-14:00", onlyMonFri:true },
 ];
+
+let puestoHorarioMap = new Map(); // puesto -> {manana,tarde,noche}
+
+async function cargarPuestosHorarios(){
+  try{
+    const res = await fetch("/api/puestos");
+    const data = await res.json();
+    if(res.ok && data.ok){
+      puestoHorarioMap = new Map((data.items||[]).map(it => [String(it.puesto), it]));
+    }
+  }catch(e){
+    console.warn("No se pudo cargar /api/puestos", e);
+  }
+}
+
+function rangeForRow(row){
+  const it = puestoHorarioMap.get(String(row.puesto));
+  if(!it) return row.defaultRange;
+
+  if(row.turno === "M") return it.manana || row.defaultRange;
+  if(row.turno === "T") return it.tarde || row.defaultRange;
+  if(row.turno === "N") return it.noche || row.defaultRange;
+  return row.defaultRange;
+}
+
+function buildRows(base){
+  return base.map(r => {
+    const range = rangeForRow(r);
+    const nice = range ? range.replace("-", " a ") : "";
+    return {
+      ...r,
+      horaKey: range,
+      label: `${r.labelPrefix}${nice ? " ("+nice+")" : ""}`,
+    };
+  });
+}
 
 // Espera que tu API devuelva por cada día: {fecha, sector, puesto, turno, horario, legajo, nombre}
 function keyFor(item){
@@ -178,6 +214,7 @@ async function main(){
       const hasta = ymd(last);
       const sectorFilter = secEl.value;
 
+      await cargarPuestosHorarios();
       const data = await fetchResuelto(desde, hasta);
 
       // Agrupar por fecha
@@ -192,10 +229,21 @@ async function main(){
 
       let html = "";
       if (sectorFilter === "TODOS" || sectorFilter === "PLAYA") {
-        html += renderBlock("PLAYA", ROWS_PLAYA, weeks, byDateKey, sectorFilter);
+        html += renderBlock("PLAYA", buildRows(BASE_ROWS_PLAYA), weeks, byDateKey, sectorFilter);
       }
       if (sectorFilter === "TODOS" || sectorFilter === "MINI") {
-        html += renderBlock("SHOP / MINI", ROWS_SHOP, weeks, byDateKey, sectorFilter);
+        // Si no hay nada programado para SHOP/MINI en el período, mostramos un mensaje claro
+        const hasMini = Array.isArray(data) && data.some(it => String(it.sector||'').toUpperCase() === 'MINI');
+        if(!hasMini){
+          html += `
+            <div style="margin:18px 0 8px; font-weight:700; font-size:16px;">SHOP / MINI</div>
+            <div style="padding:12px 14px; border:1px dashed #d1d5db; border-radius:12px; color:#6b7280;">
+              No hay turnos cargados en este período para SHOP / MINI.
+            </div>
+          `;
+        }else{
+          html += renderBlock("SHOP / MINI", buildRows(BASE_ROWS_SHOP), weeks, byDateKey, sectorFilter);
+        }
       }
 
       grid.innerHTML = html;

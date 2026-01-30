@@ -34,7 +34,7 @@
 
       <div style="display:flex; gap:12px; flex-wrap:wrap;">
         <div class="field">
-          <label for="c_patron">Patrón</label>
+          <label for="c_patron">Patrón (override del empleado)</label>
           <select id="c_patron"></select>
         </div>
 
@@ -45,11 +45,94 @@
 
         <div class="field">
           <label>&nbsp;</label>
-          <button class="btn" id="btn_guardar_patron">Asignar patrón</button>
+          <button class="btn" id="btn_guardar_patron">Guardar override</button>
         </div>
       </div>
 
-      <p class="muted" id="patron_info"></p>
+      <p class="muted" id="patron_info">&nbsp;</p>
+    </section>
+
+    <section class="card">
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+        <h2 style="margin:0">Configuración avanzada</h2>
+        <button class="btn btn-light" type="button" id="adv_toggle">Mostrar</button>
+      </div>
+
+      <div id="adv_panel" style="display:none; margin-top:12px;">
+        <p class="muted">Horarios por puesto (se usan para inferir turno/horario real en calendario y tardanzas). Los puestos se toman del ABM de empleados; acá solo configurás sus horarios.</p>
+
+        <div class="divider"></div>
+
+        <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end;">
+          <div class="field">
+            <label for="hp_puesto">Puesto</label>
+            <select id="hp_puesto"></select>
+          </div>
+
+          <div class="field">
+            <label for="hp_patron">Patrón por defecto</label>
+            <select id="hp_patron"></select>
+          </div>
+
+          <div class="field">
+            <label for="hp_patron_inicio">Inicio del patrón</label>
+            <input type="date" id="hp_patron_inicio" />
+          </div>
+
+          <div class="field">
+            <label>Mañana</label>
+            <div style="display:flex; gap:8px; align-items:center;">
+              <input type="time" id="hp_m_ini" />
+              <span class="muted">a</span>
+              <input type="time" id="hp_m_fin" />
+            </div>
+          </div>
+
+          <div class="field">
+            <label>Tarde</label>
+            <div style="display:flex; gap:8px; align-items:center;">
+              <input type="time" id="hp_t_ini" />
+              <span class="muted">a</span>
+              <input type="time" id="hp_t_fin" />
+            </div>
+          </div>
+
+          <div class="field">
+            <label>Noche</label>
+            <div style="display:flex; gap:8px; align-items:center;">
+              <input type="time" id="hp_n_ini" />
+              <span class="muted">a</span>
+              <input type="time" id="hp_n_fin" />
+            </div>
+            <small class="muted">Si el fin es menor al inicio, se asume que cruza medianoche.</small>
+          </div>
+
+          <div class="field">
+            <label>&nbsp;</label>
+            <div style="display:flex; gap:8px;">
+              <button class="btn btn-primary" type="button" id="hp_guardar">Guardar</button>
+              <button class="btn btn-danger" type="button" id="hp_borrar">Borrar config</button>
+            </div>
+          </div>
+        </div>
+
+        <p class="muted" id="hp_msg" style="margin-top:10px;">&nbsp;</p>
+
+        <div class="table-wrap">
+          <table class="table" id="hp_tabla">
+            <thead>
+              <tr>
+                <th>Puesto</th>
+                <th>Patrón</th>
+                <th>Mañana</th>
+                <th>Tarde</th>
+                <th>Noche</th>
+              </tr>
+            </thead>
+            <tbody id="hp_body"></tbody>
+          </table>
+        </div>
+      </div>
     </section>
 
     <section class="card">
@@ -107,7 +190,7 @@
             </div>
             <div class="field">
               <label>Puesto (opcional)</label>
-              <input type="text" id="ex_puesto" placeholder="Ej: Playero/a" />
+              <select id="ex_puesto"><option value="">(sin cambio)</option></select>
             </div>
             <div class="field">
               <label>Turno (opcional)</label>
@@ -138,4 +221,5 @@
 <%- include('../partials/footer') %>
 
 <script src="/calendario.js"></script>
+<script src="/horarios-por-puesto.js"></script>
 <%- include('../partials/document-end') %>

@@ -1,5 +1,22 @@
 console.log("✅ abiertas.js cargado");
 
+// Si venimos desde "Fichada incompleta o ausente", traemos casos desde localStorage
+try{
+  const raw = localStorage.getItem("km325_faltas_pendientes");
+  if(raw){
+    const faltas = JSON.parse(raw);
+    if(Array.isArray(faltas) && faltas.length){
+      const first = faltas[0];
+      const firstEmp = (first.empleados||[])[0];
+      // Prefill: legajo y fecha. El resto lo completa el usuario.
+      window.__KM325_FALTAS_PENDIENTES__ = faltas;
+      window.__KM325_FALTA_FIRST__ = { fecha: first.fecha, emp: firstEmp };
+    }
+    localStorage.removeItem("km325_faltas_pendientes");
+  }
+}catch(e){}
+
+
 const $ = (id) => document.getElementById(id);
 
 const status = $("status");
@@ -16,6 +33,20 @@ const m_puesto = $("m_puesto");
 const m_fecha_entrada = $("m_fecha_entrada");
 const m_entrada = $("m_entrada");
 const btnCrear = $("btn-crear");
+
+// Prefill desde modal de faltas (si aplica)
+if(window.__KM325_FALTA_FIRST__){
+  const { fecha, emp } = window.__KM325_FALTA_FIRST__;
+  if(m_legajo && emp?.legajo) m_legajo.value = emp.legajo;
+  if(m_nombre && emp?.nombre) m_nombre.value = emp.nombre;
+  if(m_fecha_entrada && fecha) m_fecha_entrada.value = fecha;
+
+  if(status){
+    const total = (window.__KM325_FALTAS_PENDIENTES__||[]).reduce((acc,f)=> acc + ((f.empleados||[]).length||0), 0);
+    status.textContent = `Venís desde "Fichada incompleta": ${total} caso(s) para regularizar. Cargá/edita manualmente y refrescá la lista.`;
+  }
+}
+
 
 // modal editar
 const modalEdit = $("modal-edit");

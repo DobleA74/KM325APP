@@ -138,7 +138,7 @@ function overlapMinutes(aStart, aEnd, bStart, bEnd) {
 
 function isPuestoPlaya(puesto) {
   const p = String(puesto || "").toLowerCase();
-  return p.includes("playero") || p.includes("auxiliar de playa") || p.includes("auxiliar") && p.includes("playa");
+  return p.includes("playero") || p.includes("auxiliar de playa") || (p.includes("auxiliar") && p.includes("playa")) || p.includes("refuerzo") && p.includes("playa");
 }
 
 function isPuestoShop(puesto) {
@@ -392,6 +392,9 @@ db.serialize(() => {
     )
   `);
 
+  // Evita duplicar faltas de fichada por día (registro automático)
+  db.run(`CREATE UNIQUE INDEX IF NOT EXISTS ux_nov_falta_fichada ON novedades_rrhh(legajo, tipo, fecha_desde) WHERE tipo='FALTA_FICHADA'`);
+
   // Tardanzas: cálculo automático pero editable
   db.run(`
     CREATE TABLE IF NOT EXISTS tardanzas (
@@ -428,6 +431,12 @@ db.serialize(() => {
   `);
 
   db.run(`CREATE INDEX IF NOT EXISTS idx_puesto_horarios_puesto ON puesto_horarios(puesto)`);
+
+  // Vincular un patrón por defecto a un puesto (sin duplicar entidad "Puesto")
+  // - patron_id: id de calendario_patrones
+  // - patron_inicio: YYYY-MM-DD (fecha de inicio del ciclo para ese puesto)
+  addColumnIfMissing('puesto_horarios', 'patron_id', 'patron_id INTEGER');
+  addColumnIfMissing('puesto_horarios', 'patron_inicio', 'patron_inicio TEXT');
 
   // ==========================
   // CALENDARIO: patrones + excepciones
@@ -625,6 +634,8 @@ app.post("/api/asistencias/confirmar", (req, res) => {
   let abiertas_creadas = 0;
   let abiertas_cerradas = 0;
 
+  const fechasConfirmadas = new Set();
+
   const stmt = db.prepare(`
     INSERT OR IGNORE INTO asistencias
     (legajo,nombre,sector,puesto,fecha_entrada,fecha_salida,entrada,salida,horas,nocturnas)
@@ -636,8 +647,25 @@ app.post("/api/asistencias/confirmar", (req, res) => {
   function next() {
     const r = items.shift();
     if (!r) {
-      return stmt.finalize(() => {
-        res.json({ ok: true, insertados, ignorados, abiertas_creadas, abiertas_cerradas });
+      return stmt.finalize(async () => {
+        try {
+          const faltas = await detectarFaltaFichada(Array.from(fechasConfirmadas));
+          const total = faltas.reduce((acc, x) => acc + (x.count || 0), 0);
+
+          res.json({
+            ok: true,
+            insertados,
+            ignorados,
+            abiertas_creadas,
+            abiertas_cerradas,
+            faltas_fichada: faltas,
+            faltas_fichada_total: total,
+          });
+        } catch (e) {
+          console.error(e);
+          // Si falla el control, no rompemos la confirmación
+          res.json({ ok: true, insertados, ignorados, abiertas_creadas, abiertas_cerradas });
+        }
       });
     }
 
@@ -649,6 +677,8 @@ app.post("/api/asistencias/confirmar", (req, res) => {
     const fecha_salida = String(r.fecha_salida || r.fecha || "");
     const entrada = String(r.entrada || "");
     const salida = String(r.salida || "");
+
+    if (fecha) fechasConfirmadas.add(fecha);
 
     if (!legajo || !fecha || !entrada || !salida) {
       ignorados++;
@@ -766,6 +796,166 @@ app.post("/api/asistencias/confirmar", (req, res) => {
     );
   }
 
+  async function detectarFaltaFichada(fechasISO) {
+    const fechas = (fechasISO || []).filter((f) => /^\d{4}-\d{2}-\d{2}$/.test(String(f)));
+    if (!fechas.length) return [];
+
+    const normTurno = (t) => {
+      const s = String(t || '').trim().toUpperCase();
+      if (!s) return '';
+      if (['M', 'MAÑANA', 'MANANA', 'MANIANA'].includes(s)) return 'MANIANA';
+      if (['T', 'TARDE'].includes(s)) return 'TARDE';
+      if (['N', 'NOCHE'].includes(s)) return 'NOCHE';
+      if (['F', 'FRANCO', 'LIBRE', 'DESCANSO'].includes(s)) return 'FRANCO';
+      if (['A', 'AUSENCIA', 'VACACIONES', 'LICENCIA', 'PERMISO', 'ENFERMEDAD'].includes(s)) return 'AUSENCIA';
+      return s;
+    };
+
+    // Para el control de "Falta de fichada" tomamos el padrón completo de empleados.
+    // Si alguien está realmente inactivo, normalmente no estará programado por patrón/excepción,
+    // pero si aparece en calendario, lo queremos controlar igual.
+    const empleados = await allSql('SELECT legajo, nombre, sector, puesto FROM empleados');
+    const empMap = new Map();
+    for (const e of empleados || []) {
+      const leg = normLegajo(e.legajo);
+      if (!leg) continue;
+      empMap.set(leg, { ...e, legajo: leg });
+    }
+
+    // Patrones por puesto (config avanzada)
+    const phRows = await allSql('SELECT puesto, patron_id, patron_inicio FROM puesto_horarios WHERE patron_id IS NOT NULL');
+    const puestoPatronMap = new Map(); // puesto -> { patron_id, patron_inicio }
+    for (const r of phRows || []) {
+      const p = String(r.puesto || '').trim();
+      const pid = r.patron_id != null ? Number(r.patron_id) : null;
+      const ini = r.patron_inicio ? String(r.patron_inicio) : null;
+      if (p && pid) puestoPatronMap.set(p.toUpperCase(), { patron_id: pid, patron_inicio: ini });
+    }
+
+    // Asignaciones de patrón (una por legajo)
+    const asigns = await allSql('SELECT * FROM calendario_empleado_patron');
+    const asignMap = new Map();
+    const patronIds = new Set();
+    for (const v of puestoPatronMap.values()) patronIds.add(Number(v.patron_id));
+    for (const a of asigns || []) {
+      const leg = normLegajo(a.legajo);
+      if (!leg) continue;
+      asignMap.set(leg, a);
+      patronIds.add(Number(a.patron_id));
+    }
+
+    // Patrones + detalle (cacheados)
+    const patronMap = new Map();
+    const detByPatron = new Map(); // patron_id -> Map(dia_idx -> row)
+    for (const pid of patronIds) {
+      const p = (await allSql('SELECT * FROM calendario_patrones WHERE id=?', [pid]))[0];
+      if (!p) continue;
+      patronMap.set(pid, p);
+      const det = await allSql('SELECT * FROM calendario_patron_detalle WHERE patron_id=?', [pid]);
+      detByPatron.set(pid, new Map((det || []).map((d) => [Number(d.dia_idx), d])));
+    }
+
+    // Excepciones para el rango de fechas confirmado
+    const minF = fechas.slice().sort()[0];
+    const maxF = fechas.slice().sort().slice(-1)[0];
+    const exRows = await allSql(
+      'SELECT * FROM calendario_excepciones WHERE fecha BETWEEN ? AND ?',
+      [minF, maxF]
+    );
+    const exMap = new Map(); // key leg|fecha -> ex
+    for (const ex of exRows || []) {
+      const leg = normLegajo(ex.legajo);
+      const f = String(ex.fecha || '');
+      if (!leg || !f) continue;
+      exMap.set(`${leg}|${f}`, ex);
+    }
+
+    const out = [];
+
+    for (const fecha of fechas) {
+      // Programados (según calendario)
+      const programados = [];
+      for (const [leg, emp] of empMap.entries()) {
+        const ex = exMap.get(`${leg}|${fecha}`);
+        let turno = '';
+        let puesto = '';
+
+        if (ex) {
+          turno = ex.turno_override ? normTurno(ex.turno_override) : '';
+          puesto = ex.puesto_override || emp.puesto || '';
+          if (!turno) {
+            const tipo = String(ex.tipo || '').toUpperCase();
+            if (['VACACIONES', 'LICENCIA', 'PERMISO', 'ENFERMEDAD'].includes(tipo)) turno = 'AUSENCIA';
+            if (tipo === 'FRANCO_EXTRA') turno = 'FRANCO';
+          }
+        } else {
+          const as = asignMap.get(leg);
+          if (as) {
+            const pid = Number(as.patron_id);
+            const patron = patronMap.get(pid);
+            const detMap = detByPatron.get(pid) || new Map();
+            if (patron) {
+              const diff = daysBetween(as.fecha_inicio, fecha);
+              const idx = ((diff % patron.ciclo_dias) + patron.ciclo_dias) % patron.ciclo_dias;
+              const d = detMap.get(idx);
+              turno = d ? normTurno(d.turno) : 'FRANCO';
+              puesto = d && d.puesto ? d.puesto : (emp.puesto || '');
+            }
+          } else {
+            // Si el empleado no tiene patrón asignado, probamos patrón por puesto
+            const pp = puestoPatronMap.get(String(emp.puesto || '').trim().toUpperCase());
+            if (pp) {
+              const pid = Number(pp.patron_id);
+              const patron = patronMap.get(pid);
+              const detMap = detByPatron.get(pid) || new Map();
+              const inicio = pp.patron_inicio || fecha; // fallback
+              if (patron) {
+                const diff = daysBetween(inicio, fecha);
+                const idx = ((diff % patron.ciclo_dias) + patron.ciclo_dias) % patron.ciclo_dias;
+                const d = detMap.get(idx);
+                turno = d ? normTurno(d.turno) : 'FRANCO';
+                puesto = d && d.puesto ? d.puesto : (emp.puesto || '');
+              } else {
+                turno = '';
+                puesto = emp.puesto || '';
+              }
+            } else {
+              turno = '';
+              puesto = emp.puesto || '';
+            }
+          }
+        }
+
+        if (['MANIANA', 'TARDE', 'NOCHE'].includes(String(turno).toUpperCase())) {
+          programados.push({ legajo: leg, nombre: emp.nombre || '', sector: emp.sector || '', puesto: puesto || emp.puesto || '', turno });
+        }
+      }
+
+      if (!programados.length) continue;
+
+      // Quién fichó (asistencias + abiertas) ese día
+      const asisRows = await allSql('SELECT DISTINCT legajo FROM asistencias WHERE fecha_entrada = ?', [fecha]);
+      const abRows = await allSql('SELECT DISTINCT legajo FROM jornadas_abiertas WHERE fecha_entrada = ?', [fecha]);
+      const presentes = new Set(
+        []
+          .concat((asisRows || []).map((r) => normLegajo(r.legajo)))
+          .concat((abRows || []).map((r) => normLegajo(r.legajo)))
+          .filter(Boolean)
+      );
+
+      const faltantes = programados.filter((p) => !presentes.has(p.legajo));
+      if (faltantes.length) {
+        out.push({
+          fecha,
+          count: faltantes.length,
+          empleados: faltantes,
+        });
+      }
+    }
+
+    return out;
+  }
+
   next();
 });
 
@@ -805,6 +995,174 @@ app.delete("/api/empleados/:legajo", (req, res) => {
     if (err) return res.status(500).json({ ok: false, error: "DB error" });
     res.json({ ok: true });
   });
+});
+
+
+/* ===============================
+   PUESTOS / HORARIOS (API)
+   Tabla: puesto_horarios
+================================ */
+app.get('/api/puestos/catalogo', (req, res) => {
+  db.all(
+    `SELECT DISTINCT TRIM(puesto) AS puesto
+     FROM empleados
+     WHERE puesto IS NOT NULL AND TRIM(puesto) <> ''
+     ORDER BY TRIM(puesto)`,
+    [],
+    (err, rows) => {
+      if (err) return res.status(500).json({ ok: false, error: 'DB error' });
+      res.json({ ok: true, items: (rows || []).map(r => r.puesto) });
+    }
+  );
+});
+
+app.get('/api/puestos', (req, res) => {
+  db.all(
+    `SELECT ph.puesto, ph.manana_start, ph.manana_end, ph.tarde_start, ph.tarde_end, ph.noche_start, ph.noche_end,
+            ph.patron_id, ph.patron_inicio,
+            p.nombre as patron_nombre
+     FROM puesto_horarios ph
+     LEFT JOIN calendario_patrones p ON p.id = ph.patron_id
+     ORDER BY ph.puesto`,
+    [],
+    (err, rows) => {
+      if (err) return res.status(500).json({ ok: false, error: 'DB error' });
+
+      const items = (rows || []).map((r) => {
+        const toRange = (a, b) => {
+          if (a == null || b == null) return '';
+          return `${minToHHMM(a)}-${minToHHMM(b)}`;
+        };
+        return {
+          puesto: r.puesto,
+          manana_start: r.manana_start,
+          manana_end: r.manana_end,
+          tarde_start: r.tarde_start,
+          tarde_end: r.tarde_end,
+          noche_start: r.noche_start,
+          noche_end: r.noche_end,
+          manana: toRange(r.manana_start, r.manana_end),
+          tarde: toRange(r.tarde_start, r.tarde_end),
+          noche: toRange(r.noche_start, r.noche_end),
+          patron_id: r.patron_id ?? null,
+          patron_inicio: r.patron_inicio ?? null,
+          patron_nombre: r.patron_nombre ?? null,
+        };
+      });
+
+      res.json({ ok: true, items });
+    }
+  );
+});
+
+app.post('/api/puestos', (req, res) => {
+  const { puesto, manana_start, manana_end, tarde_start, tarde_end, noche_start, noche_end, patron_id, patron_inicio } = req.body || {};
+  const p = String(puesto || '').trim();
+  if (!p) return res.status(400).json({ ok: false, error: 'Falta puesto' });
+
+  const parseTime = (v) => {
+    if (v === null || v === undefined || v === '') return null;
+    if (typeof v === 'number' && Number.isFinite(v)) return Math.trunc(v);
+    const s = String(v).trim();
+    if (/^\d+$/.test(s)) return clampInt(Number(s), 0);
+    const m = s.match(/^(\d{1,2}):(\d{2})$/);
+    if (!m) return null;
+    const hh = clampInt(Number(m[1]), 0, 48);
+    const mm = clampInt(Number(m[2]), 0, 59);
+    return hh * 60 + mm;
+  };
+
+  let ms = parseTime(manana_start);
+  let me = parseTime(manana_end);
+  let ts = parseTime(tarde_start);
+  let te = parseTime(tarde_end);
+  let ns = parseTime(noche_start);
+  let ne = parseTime(noche_end);
+
+  // Si el fin de noche es menor/igual al inicio, asumimos que cruza medianoche.
+  if (ns != null && ne != null && ne <= ns) ne += 1440;
+
+  const pid = patron_id === null || patron_id === undefined || patron_id === '' ? null : Number(patron_id);
+  const pinicio = patron_inicio ? String(patron_inicio) : null;
+
+  db.run(
+    `
+    INSERT INTO puesto_horarios (puesto, manana_start, manana_end, tarde_start, tarde_end, noche_start, noche_end, patron_id, patron_inicio)
+    VALUES (?,?,?,?,?,?,?,?,?)
+    ON CONFLICT(puesto) DO UPDATE SET
+      manana_start=excluded.manana_start,
+      manana_end=excluded.manana_end,
+      tarde_start=excluded.tarde_start,
+      tarde_end=excluded.tarde_end,
+      noche_start=excluded.noche_start,
+      noche_end=excluded.noche_end,
+      patron_id=excluded.patron_id,
+      patron_inicio=excluded.patron_inicio
+    `,
+    [p, ms, me, ts, te, ns, ne, pid, pinicio],
+    function (err) {
+      if (err) return res.status(500).json({ ok: false, error: 'DB error' });
+      res.json({ ok: true, changes: this.changes });
+    }
+  );
+});
+
+app.delete('/api/puestos/:puesto', (req, res) => {
+  const p = String(req.params.puesto || '').trim();
+  if (!p) return res.status(400).json({ ok: false, error: 'Puesto inválido' });
+
+  db.run(`DELETE FROM puesto_horarios WHERE puesto=?`, [p], function (err) {
+    if (err) return res.status(500).json({ ok: false, error: 'DB error' });
+    res.json({ ok: true, changes: this.changes });
+  });
+});
+
+/* ===============================
+   NOVEDADES RRHH (API)
+================================ */
+app.post('/api/novedades/falta-fichada', async (req, res) => {
+  try {
+    const { faltas } = req.body || {};
+    const arr = Array.isArray(faltas) ? faltas : [];
+    if (!arr.length) return res.status(400).json({ ok: false, error: 'Sin faltas' });
+
+    // armamos inserts (una por legajo y fecha)
+    const ins = db.prepare(`
+      INSERT OR IGNORE INTO novedades_rrhh
+      (legajo, tipo, fecha_desde, fecha_hasta, dias, observaciones, requiere_comprobante)
+      VALUES (?,?,?,?,?,?,?)
+    `);
+
+    let insertados = 0;
+    let ignorados = 0;
+
+    for (const f of arr) {
+      const fecha = String(f.fecha || '').trim();
+      const legs = (f.legajos || f.legajo || f.items || f.empleados || []);
+      const list = Array.isArray(legs)
+        ? legs
+        : [legs];
+
+      for (const it of list) {
+        const leg = normLegajo(typeof it === 'string' ? it : it?.legajo);
+        if (!leg || !/^\d{4}-\d{2}-\d{2}$/.test(fecha)) continue;
+
+        const obs = `Auto: Falta de fichada detectada al confirmar asistencias (${fecha})`;
+        await new Promise((resolve) => {
+          ins.run([leg, 'FALTA_FICHADA', fecha, fecha, 1, obs, 0], function (e) {
+            if (!e && this && this.changes === 1) insertados++;
+            else ignorados++;
+            resolve();
+          });
+        });
+      }
+    }
+
+    ins.finalize(() => res.json({ ok: true, insertados, ignorados }));
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ ok: false, error: 'Error registrando faltas' });
+  }
 });
 
 /* ===============================
@@ -1883,6 +2241,95 @@ app.get('/api/liquidacion/escalas', (req, res) => {
   );
 });
 
+// (3b) Preparado: conteo desde calendario (francos / días programados) sin romper liquidación actual
+// Devuelve counts por legajo para el mes consultado.
+// Útil para futuras decisiones: sumar a días trabajados o solo informativo.
+app.get('/api/liquidacion/calendario', async (req, res) => {
+  const mes = String(req.query.mes || '').trim();
+  const r = monthRange(mes);
+  if (!r) return res.status(400).json({ ok: false, error: 'Mes inválido (YYYY-MM)' });
+
+  try {
+    const emps = await allSql('SELECT legajo, nombre, sector, puesto FROM empleados WHERE activo=1');
+    const asigns = await allSql('SELECT * FROM calendario_empleado_patron');
+    const asignMap = new Map((asigns || []).map(a => [normLegajo(a.legajo), a]));
+    const patronIds = Array.from(new Set((asigns || []).map(a => Number(a.patron_id)).filter(Boolean)));
+
+    const patronMap = new Map();
+    const detByPatron = new Map();
+    for (const pid of patronIds) {
+      const p = (await allSql('SELECT * FROM calendario_patrones WHERE id=?', [pid]))[0];
+      if (!p) continue;
+      patronMap.set(pid, p);
+      const det = await allSql('SELECT * FROM calendario_patron_detalle WHERE patron_id=?', [pid]);
+      detByPatron.set(pid, new Map((det || []).map(d => [Number(d.dia_idx), d])));
+    }
+
+    const exRows = await allSql(
+      'SELECT * FROM calendario_excepciones WHERE fecha BETWEEN ? AND ?',
+      [r.start, r.end]
+    );
+    const exMap = new Map(); // leg|fecha -> ex
+    for (const ex of exRows || []) {
+      const leg = normLegajo(ex.legajo);
+      const f = String(ex.fecha || '');
+      if (!leg || !f) continue;
+      exMap.set(`${leg}|${f}`, ex);
+    }
+
+    const out = [];
+    for (const e of emps || []) {
+      const leg = normLegajo(e.legajo);
+      if (!leg) continue;
+
+      let francos = 0;
+      let programados = 0;
+
+      let cur = r.start;
+      while (cur <= r.end) {
+        const ex = exMap.get(`${leg}|${cur}`);
+        let turno = '';
+
+        if (ex) {
+          turno = ex.turno_override ? String(ex.turno_override).toUpperCase() : '';
+          if (!turno) {
+            const tipo = String(ex.tipo || '').toUpperCase();
+            if (['VACACIONES', 'LICENCIA', 'PERMISO', 'ENFERMEDAD'].includes(tipo)) turno = 'AUSENCIA';
+            if (tipo === 'FRANCO_EXTRA') turno = 'FRANCO';
+          }
+        } else {
+          const as = asignMap.get(leg);
+          if (as) {
+            const pid = Number(as.patron_id);
+            const patron = patronMap.get(pid);
+            const detMap = detByPatron.get(pid) || new Map();
+            if (patron) {
+              const diff = daysBetween(as.fecha_inicio, cur);
+              const idx = ((diff % patron.ciclo_dias) + patron.ciclo_dias) % patron.ciclo_dias;
+              const d = detMap.get(idx);
+              turno = d ? String(d.turno).toUpperCase() : 'FRANCO';
+            }
+          }
+        }
+
+        const t = String(turno || '').toUpperCase();
+        if (t === 'FRANCO') francos++;
+        if (['MANIANA', 'TARDE', 'NOCHE'].includes(t)) programados++;
+
+        cur = addDays(cur, 1);
+      }
+
+      out.push({ legajo: leg, nombre: e.nombre || '', francos_calendario: francos, dias_programados_calendario: programados });
+    }
+
+    out.sort((a, b) => String(a.nombre || '').localeCompare(String(b.nombre || '')));
+    res.json({ ok: true, mes, rango: r, items: out });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ ok: false, error: 'Error contando calendario' });
+  }
+});
+
 // (4) Resumen de liquidación
 app.get('/api/liquidacion', (req, res) => {
   const mes = String(req.query.mes || '').trim();
@@ -2120,6 +2567,15 @@ app.get('/api/patrones', (req, res) => {
   });
 });
 
+// Alias para compatibilidad con pantallas antiguas / integraciones
+// Devuelve { ok:true, patrones:[...] }
+app.get('/api/calendario/patrones', (req, res) => {
+  db.all('SELECT * FROM calendario_patrones ORDER BY id DESC', (err, rows) => {
+    if (err) return res.status(500).json({ ok: false, error: 'Error leyendo patrones' });
+    res.json({ ok: true, patrones: rows || [] });
+  });
+});
+
 app.post('/api/patrones', (req, res) => {
   const { nombre, ciclo_dias, detalle } = req.body || {};
   if (!nombre || !ciclo_dias) return res.status(400).json({ error: 'Faltan datos (nombre, ciclo_dias)' });
@@ -2154,6 +2610,52 @@ app.get('/api/empleados/:legajo/patron', (req, res) => {
       if (err) return res.status(500).json({ error: 'Error leyendo asignación' });
       if (!row) return res.json({});
       res.json(row);
+    }
+  );
+});
+
+// Patrón efectivo (override por empleado, o por puesto desde Configuración avanzada)
+app.get('/api/empleados/:legajo/patron-efectivo', (req, res) => {
+  const legajo = normLegajo(req.params.legajo);
+  if (!legajo) return res.status(400).json({ error: 'Legajo inválido' });
+
+  // 1) Override por empleado
+  db.get(
+    `SELECT ep.legajo, ep.patron_id, ep.fecha_inicio, p.nombre as patron_nombre, 'EMPLEADO' as fuente
+     FROM calendario_empleado_patron ep
+     JOIN calendario_patrones p ON p.id = ep.patron_id
+     WHERE ep.legajo = ?`,
+    [legajo],
+    (err, row) => {
+      if (err) return res.status(500).json({ error: 'Error leyendo patrón' });
+      if (row) return res.json(row);
+
+      // 2) Por puesto (config avanzada)
+      db.get('SELECT puesto FROM empleados WHERE legajo=?', [legajo], (e2, emp) => {
+        if (e2) return res.status(500).json({ error: 'Error leyendo empleado' });
+        const puesto = String(emp?.puesto || '').trim();
+        if (!puesto) return res.json({});
+
+        db.get(
+          `SELECT ph.puesto, ph.patron_id, ph.patron_inicio as fecha_inicio, p.nombre as patron_nombre, 'PUESTO' as fuente
+           FROM puesto_horarios ph
+           JOIN calendario_patrones p ON p.id = ph.patron_id
+           WHERE UPPER(TRIM(ph.puesto)) = UPPER(TRIM(?)) AND ph.patron_id IS NOT NULL`,
+          [puesto],
+          (e3, r3) => {
+            if (e3) return res.status(500).json({ error: 'Error leyendo patrón por puesto' });
+            if (!r3) return res.json({});
+            res.json({
+              legajo,
+              patron_id: r3.patron_id,
+              fecha_inicio: r3.fecha_inicio,
+              patron_nombre: r3.patron_nombre,
+              fuente: 'PUESTO',
+              puesto: r3.puesto,
+            });
+          }
+        );
+      });
     }
   );
 });
@@ -2215,7 +2717,8 @@ app.delete('/api/calendario/excepciones/:id', (req, res) => {
   });
 });
 
-// Calendario resuelto
+// Calendario resuelto (por empleado)
+// Devuelve dias: { fecha, puesto, turno, hora_inicio_min, hora_fin_min, fuente, excepcion_id, excepcion? }
 app.get('/api/calendario/resuelto', async (req, res) => {
   const { legajo, desde, hasta } = req.query || {};
   if (!legajo || !desde || !hasta) return res.status(400).json({ error: 'Faltan parámetros (legajo, desde, hasta)' });
@@ -2226,6 +2729,17 @@ app.get('/api/calendario/resuelto', async (req, res) => {
     const empleado = emp[0];
 
     const asign = await allSql('SELECT * FROM calendario_empleado_patron WHERE legajo = ?', [legajo]);
+    // Si el empleado no tiene un patrón asignado manualmente, intentamos usar el patrón por defecto del puesto
+    let puestoDefaultPatron = null;
+    if (!asign.length) {
+      const ph = await allSql('SELECT patron_id, patron_inicio FROM puesto_horarios WHERE puesto = ?', [empleado.puesto || '']);
+      if (ph?.length && ph[0]?.patron_id) {
+        puestoDefaultPatron = {
+          patron_id: Number(ph[0].patron_id),
+          fecha_inicio: String(ph[0].patron_inicio || desde),
+        };
+      }
+    }
     const excepciones = await allSql(
       'SELECT * FROM calendario_excepciones WHERE legajo=? AND fecha BETWEEN ? AND ? ORDER BY fecha',
       [legajo, desde, hasta]
@@ -2234,9 +2748,10 @@ app.get('/api/calendario/resuelto', async (req, res) => {
 
     let patron = null;
     let detalleMap = new Map();
-    if (asign.length) {
-      patron = (await allSql('SELECT * FROM calendario_patrones WHERE id = ?', [asign[0].patron_id]))[0] || null;
-      const det = await allSql('SELECT * FROM calendario_patron_detalle WHERE patron_id = ? ORDER BY dia_idx', [asign[0].patron_id]);
+    const patronSource = asign.length ? { patron_id: asign[0].patron_id, fecha_inicio: asign[0].fecha_inicio } : puestoDefaultPatron;
+    if (patronSource?.patron_id) {
+      patron = (await allSql('SELECT * FROM calendario_patrones WHERE id = ?', [patronSource.patron_id]))[0] || null;
+      const det = await allSql('SELECT * FROM calendario_patron_detalle WHERE patron_id = ? ORDER BY dia_idx', [patronSource.patron_id]);
       detalleMap = new Map(det.map((d) => [Number(d.dia_idx), d]));
     }
 
@@ -2255,12 +2770,14 @@ app.get('/api/calendario/resuelto', async (req, res) => {
         turno = ex.turno_override ? String(ex.turno_override).toUpperCase() : '';
         puesto = ex.puesto_override || empleado.puesto || '';
         if (!turno) {
-          if (['VACACIONES', 'LICENCIA', 'PERMISO', 'ENFERMEDAD'].includes(String(ex.tipo).toUpperCase())) turno = 'AUSENCIA';
+          const tipo = String(ex.tipo || '').toUpperCase();
+          if (['VACACIONES', 'LICENCIA', 'PERMISO', 'ENFERMEDAD'].includes(tipo)) turno = 'AUSENCIA';
+          if (tipo === 'FRANCO_EXTRA') turno = 'FRANCO';
         }
         if (String(ex.tipo).toUpperCase() === 'FRANCO_EXTRA' && !turno) turno = 'FRANCO';
-      } else if (patron && asign.length) {
-        fuente = 'Patrón';
-        const diff = daysBetween(asign[0].fecha_inicio, curDate);
+      } else if (patron && patronSource?.patron_id) {
+        fuente = asign.length ? 'Patrón (empleado)' : 'Patrón (puesto)';
+        const diff = daysBetween(patronSource.fecha_inicio, curDate);
         const idx = ((diff % patron.ciclo_dias) + patron.ciclo_dias) % patron.ciclo_dias;
         const d = detalleMap.get(idx);
         turno = d ? String(d.turno).toUpperCase() : 'FRANCO';
@@ -2302,6 +2819,11 @@ app.get('/api/calendario/resuelto', async (req, res) => {
     }
 
     res.json({ ok: true, dias });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Error generando calendario' });
+  }
+});
 
 // Calendario mensual para grilla (todos los empleados)
 // Devuelve items: { fecha, sector, puesto, turno, horario, legajo, nombre }
@@ -2313,7 +2835,6 @@ app.get('/api/calendario/resuelto-mes', async (req, res) => {
     const g = sectorGroup(sector);
     if (g === 'shop') return 'MINI';
     if (g === 'playa') return 'PLAYA';
-    // fallback: si es algo raro, lo mandamos a PLAYA para no perderlo
     return 'PLAYA';
   }
 
@@ -2339,7 +2860,7 @@ app.get('/api/calendario/resuelto-mes', async (req, res) => {
   async function horarioKeyFor(puesto, turnoUpper) {
     const t = String(turnoUpper || '').toUpperCase();
     if (!puesto || !t) return '';
-    if (!['MANIANA','TARDE','NOCHE'].includes(t)) return '';
+    if (!['MANIANA', 'TARDE', 'NOCHE'].includes(t)) return '';
 
     const h = await turnoToHorario(puesto, t);
     if (h.inicio == null || h.fin == null) return '';
@@ -2353,6 +2874,16 @@ app.get('/api/calendario/resuelto-mes', async (req, res) => {
     if (!legajo) return [];
 
     const asign = await allSql('SELECT * FROM calendario_empleado_patron WHERE legajo = ?', [legajo]);
+    let puestoDefaultPatron = null;
+    if (!asign.length) {
+      const ph = await allSql('SELECT patron_id, patron_inicio FROM puesto_horarios WHERE puesto = ?', [empleado.puesto || '']);
+      if (ph?.length && ph[0]?.patron_id) {
+        puestoDefaultPatron = {
+          patron_id: Number(ph[0].patron_id),
+          fecha_inicio: String(ph[0].patron_inicio || desde),
+        };
+      }
+    }
     const excepciones = await allSql(
       'SELECT * FROM calendario_excepciones WHERE legajo=? AND fecha BETWEEN ? AND ? ORDER BY fecha',
       [legajo, desde, hasta]
@@ -2361,9 +2892,10 @@ app.get('/api/calendario/resuelto-mes', async (req, res) => {
 
     let patron = null;
     let detalleMap = new Map();
-    if (asign.length) {
-      patron = (await allSql('SELECT * FROM calendario_patrones WHERE id = ?', [asign[0].patron_id]))[0] || null;
-      const det = await allSql('SELECT * FROM calendario_patron_detalle WHERE patron_id = ? ORDER BY dia_idx', [asign[0].patron_id]);
+    const patronSource = asign.length ? { patron_id: asign[0].patron_id, fecha_inicio: asign[0].fecha_inicio } : puestoDefaultPatron;
+    if (patronSource?.patron_id) {
+      patron = (await allSql('SELECT * FROM calendario_patrones WHERE id = ?', [patronSource.patron_id]))[0] || null;
+      const det = await allSql('SELECT * FROM calendario_patron_detalle WHERE patron_id = ? ORDER BY dia_idx', [patronSource.patron_id]);
       detalleMap = new Map(det.map((d) => [Number(d.dia_idx), d]));
     }
 
@@ -2379,17 +2911,16 @@ app.get('/api/calendario/resuelto-mes', async (req, res) => {
         puesto = ex.puesto_override || empleado.puesto || '';
         if (!turno) {
           const tipo = String(ex.tipo || '').toUpperCase();
-          if (['VACACIONES','LICENCIA','PERMISO','ENFERMEDAD'].includes(tipo)) turno = 'AUSENCIA';
+          if (['VACACIONES', 'LICENCIA', 'PERMISO', 'ENFERMEDAD'].includes(tipo)) turno = 'AUSENCIA';
           if (tipo === 'FRANCO_EXTRA') turno = 'FRANCO';
         }
-      } else if (patron && asign.length) {
-        const diff = daysBetween(asign[0].fecha_inicio, curDate);
+      } else if (patron && patronSource?.patron_id) {
+        const diff = daysBetween(patronSource.fecha_inicio, curDate);
         const idx = ((diff % patron.ciclo_dias) + patron.ciclo_dias) % patron.ciclo_dias;
         const d = detalleMap.get(idx);
         turno = d ? String(d.turno).toUpperCase() : 'FRANCO';
         puesto = d && d.puesto ? d.puesto : (empleado.puesto || '');
       } else {
-        // sin patrón: celda vacía
         turno = '';
         puesto = empleado.puesto || '';
       }
@@ -2429,15 +2960,21 @@ app.get('/api/calendario/resuelto-mes', async (req, res) => {
   }
 });
 
-  } catch (e) {
-    res.status(500).json({ error: 'Error generando calendario' });
-  }
-});
-
-
 
 // // Seed / actualización de patrones base (idempotente por NOMBRE)
 // Nota: si ya existen con el mismo nombre pero tenían el ciclo/orden mal, se corrigen.
+function deletePatronByName(nombre){
+  return new Promise((resolve)=>{
+    db.get('SELECT id FROM calendario_patrones WHERE nombre=?', [nombre], (err,row)=>{
+      if(err || !row?.id) return resolve();
+      const id=row.id;
+      db.run('DELETE FROM calendario_patron_detalle WHERE patron_id=?',[id], ()=>{
+        db.run('DELETE FROM calendario_patrones WHERE id=?',[id], ()=>resolve());
+      });
+    });
+  });
+}
+
 function ensurePatron(nombre, ciclo_dias, detalle) {
   return new Promise((resolve) => {
     db.get('SELECT id FROM calendario_patrones WHERE nombre=?', [nombre], (err, row) => {
@@ -2465,7 +3002,48 @@ function ensurePatron(nombre, ciclo_dias, detalle) {
 }
 
 (async () => {
+  // Helpers solo para el seed
+  const run = (sql, params = []) =>
+    new Promise((resolve, reject) => {
+      db.run(sql, params, function (err) {
+        if (err) return reject(err);
+        resolve(this);
+      });
+    });
+
   try {
+    // Limpieza de patrones viejos/duplicados (para que no aparezcan en el combo)
+    const obsolete = [
+      'Auxiliar de shop — L a V Mañana fijo (7d)',
+      'Auxiliar de playa — L a V Mañana + finde manual (7d)',
+      'Auxiliar de playa — L a V Tarde + finde manual (7d)'
+    ];
+
+    // Desasociar referencias (por si quedaron en configuraciones viejas)
+    await run(
+      `UPDATE puesto_horarios
+       SET patron_id = NULL
+       WHERE patron_id IN (SELECT id FROM calendario_patrones WHERE nombre IN (${obsolete.map(()=>'?').join(',')}))`,
+      obsolete
+    );
+    await run(
+      `UPDATE calendario_empleado_patron
+       SET patron_id = NULL
+       WHERE patron_id IN (SELECT id FROM calendario_patrones WHERE nombre IN (${obsolete.map(()=>'?').join(',')}))`,
+      obsolete
+    );
+
+    await run(
+      `DELETE FROM calendario_patron_detalle
+       WHERE patron_id IN (SELECT id FROM calendario_patrones WHERE nombre IN (${obsolete.map(()=>'?').join(',')}))`,
+      obsolete
+    );
+    await run(
+      `DELETE FROM calendario_patrones
+       WHERE nombre IN (${obsolete.map(()=>'?').join(',')})`,
+      obsolete
+    );
+
     await ensurePatron('Fijo Mañana (trabaja)', 1, [
       { dia_idx: 0, turno: 'MANIANA', puesto: null },
     ]);
@@ -2492,8 +3070,13 @@ function ensurePatron(nombre, ciclo_dias, detalle) {
       { dia_idx: 11, turno: 'FRANCO', puesto: null },
     ]);
 
-    // AUXILIAR DE PLAYA: base L-V fijo; fines de semana se gestionan con EXCEPCIONES (rotación manual)
-    await ensurePatron('Auxiliar de playa — L a V Mañana + finde manual (7d)', 7, [
+    // AUXILIAR DE PLAYA: rota 1 semana Mañana + 1 semana Tarde; fines de semana manual (FRANCO)
+    // Limpieza de patrones antiguos (si existían como dos opciones separadas)
+    await deletePatronByName('Auxiliar de playa — L a V Mañana + finde manual (7d)');
+    await deletePatronByName('Auxiliar de playa — L a V Tarde + finde manual (7d)');
+
+    await ensurePatron('Auxiliar de playa — L a V Mañana + L a V Tarde + findes manuales (14d)', 14, [
+      // Semana 1: L-V Mañana
       { dia_idx: 0, turno: 'MANIANA', puesto: null }, // L
       { dia_idx: 1, turno: 'MANIANA', puesto: null }, // M
       { dia_idx: 2, turno: 'MANIANA', puesto: null }, // X
@@ -2501,20 +3084,18 @@ function ensurePatron(nombre, ciclo_dias, detalle) {
       { dia_idx: 4, turno: 'MANIANA', puesto: null }, // V
       { dia_idx: 5, turno: 'FRANCO', puesto: null },  // S (manual)
       { dia_idx: 6, turno: 'FRANCO', puesto: null },  // D (manual)
+      // Semana 2: L-V Tarde
+      { dia_idx: 7, turno: 'TARDE', puesto: null }, // L
+      { dia_idx: 8, turno: 'TARDE', puesto: null }, // M
+      { dia_idx: 9, turno: 'TARDE', puesto: null }, // X
+      { dia_idx: 10, turno: 'TARDE', puesto: null }, // J
+      { dia_idx: 11, turno: 'TARDE', puesto: null }, // V
+      { dia_idx: 12, turno: 'FRANCO', puesto: null }, // S (manual)
+      { dia_idx: 13, turno: 'FRANCO', puesto: null }, // D (manual)
     ]);
 
-    await ensurePatron('Auxiliar de playa — L a V Tarde + finde manual (7d)', 7, [
-      { dia_idx: 0, turno: 'TARDE', puesto: null }, // L
-      { dia_idx: 1, turno: 'TARDE', puesto: null }, // M
-      { dia_idx: 2, turno: 'TARDE', puesto: null }, // X
-      { dia_idx: 3, turno: 'TARDE', puesto: null }, // J
-      { dia_idx: 4, turno: 'TARDE', puesto: null }, // V
-      { dia_idx: 5, turno: 'FRANCO', puesto: null }, // S (manual)
-      { dia_idx: 6, turno: 'FRANCO', puesto: null }, // D (manual)
-    ]);
-
-    // AUXILIAR SHOP: siempre L-V mañana (6-14); fines de semana vacío
-    await ensurePatron('Auxiliar de shop — L a V Mañana fijo (7d)', 7, [
+    // AUXILIAR SHOP: L-V mañana; fines de semana manual (FRANCO)
+    await ensurePatron('Auxiliar de shop — L a V Mañana + findes manuales (7d)', 7, [
       { dia_idx: 0, turno: 'MANIANA', puesto: null },
       { dia_idx: 1, turno: 'MANIANA', puesto: null },
       { dia_idx: 2, turno: 'MANIANA', puesto: null },
@@ -2523,6 +3104,30 @@ function ensurePatron(nombre, ciclo_dias, detalle) {
       { dia_idx: 5, turno: 'FRANCO', puesto: null },
       { dia_idx: 6, turno: 'FRANCO', puesto: null },
     ]);
+
+    // REFUERZO PLAYA: L-V 09-13 y 17-21; fines de semana manual (FRANCO)
+    await ensurePatron('Refuerzo de playa — L a V 9-13 y 17-21 + findes manuales (7d)', 7, [
+      { dia_idx: 0, turno: 'MANIANA', puesto: 'Refuerzo de playa' },
+      { dia_idx: 1, turno: 'MANIANA', puesto: 'Refuerzo de playa' },
+      { dia_idx: 2, turno: 'MANIANA', puesto: 'Refuerzo de playa' },
+      { dia_idx: 3, turno: 'MANIANA', puesto: 'Refuerzo de playa' },
+      { dia_idx: 4, turno: 'MANIANA', puesto: 'Refuerzo de playa' },
+      { dia_idx: 5, turno: 'FRANCO', puesto: 'Refuerzo de playa' }, // S (manual)
+      { dia_idx: 6, turno: 'FRANCO', puesto: 'Refuerzo de playa' }, // D (manual)
+    ]);
+
+    // Horario por puesto para Refuerzo (dos franjas): 09-13 y 17-21
+    await run(
+      `INSERT INTO puesto_horarios (puesto, manana_start, manana_end, tarde_start, tarde_end)
+       VALUES (?,?,?,?,?)
+       ON CONFLICT(puesto) DO UPDATE SET
+         manana_start=excluded.manana_start,
+         manana_end=excluded.manana_end,
+         tarde_start=excluded.tarde_start,
+         tarde_end=excluded.tarde_end`,
+      ['Refuerzo de playa', 9*60, 13*60, 17*60, 21*60]
+    );
+
   } catch (e) {
     // no tirar abajo el server por seed
     console.error('Seed patrones: ', e?.message || e);

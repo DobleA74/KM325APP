@@ -53,6 +53,23 @@
   </section>
 </main>
 
+
+<!-- Modal: Falta de fichada detectada -->
+<div class="modal" id="modal-falta-fichada">
+  <div class="modal-card">
+    <h2>⚠️ Fichada incompleta o ausente</h2>
+    <p class="small">Se detectaron empleados programados según calendario sin fichadas registradas. Podés regularizar cargando o editando la fichada manualmente (por ejemplo, olvido de marcar).</p>
+
+    <div id="falta-fichada-list" style="margin-top:10px"></div>
+
+    <div class="modal-actions">
+      <button class="btn ghost" id="btn-falta-cerrar" type="button">Cerrar</button>
+      <button class="btn" id="btn-falta-rrhh" type="button">Marcar como ausencia (RRHH)</button>
+      <button class="btn primary" id="btn-falta-regularizar" type="button">Regularizar fichada</button>
+    </div>
+  </div>
+</div>
+
 <%- include('../partials/footer') %>
 
 <script src="/sortable.js"></script>

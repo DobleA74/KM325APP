@@ -19,7 +19,6 @@ router.get('/arqueos', pages.arqueos);
 router.get('/calendario', pages.calendarioGrid);
 router.get('/calendario/patrones', pages.calendario);
 
-
 // Liquidación (nuevo)
 router.get('/liquidacion', pages.liquidacion);
 router.get('/liquidacion/tardanzas', pages.liquidacionTardanzas);
