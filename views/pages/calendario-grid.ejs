@@ -45,12 +45,13 @@
     <div style="display:flex; gap:12px; flex-wrap:wrap;">
       <div class="field" style="min-width:140px;">
         <label>Legajo</label>
-        <input id="ex_legajo" readonly />
+        <input id="ex_legajo" placeholder="Legajo..." inputmode="numeric" />
       </div>
 
       <div class="field" style="min-width:220px; flex:1;">
         <label>Empleado</label>
-        <input id="ex_nombre" readonly />
+        <input id="ex_emp" list="ex_emp_list" placeholder="Buscar empleado (legajo o nombre)..." />
+        <datalist id="ex_emp_list"></datalist>
       </div>
 
       <div class="field" style="min-width:160px;">

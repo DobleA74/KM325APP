@@ -262,12 +262,35 @@ async function onConfirmar() {
     }
 
     setMsg(`Asignaciones confirmadas (${total}).`, "ok");
+    // Limpiamos la vista para que quede claro que ya se cargó exitosamente.
+    clearAfterConfirm();
   } catch (e) {
     console.error(e);
     setMsg(e.message || "Error", "err");
   } finally {
     btnConfirmar.disabled = false;
   }
+}
+
+function clearAfterConfirm(){
+  // No tocamos la fecha seleccionada para que puedas seguir trabajando el mismo día.
+  // Limpia montos, observaciones y tablas.
+  try {
+    // inputs montos por sector/turno
+    [elPlayaM, elPlayaT, elPlayaN, elShopM, elShopT].forEach((i)=>{ if(i) i.value = ""; });
+    [elObsPlaya, elObsShop].forEach((i)=>{ if(i) i.value = ""; });
+  } catch (_) {}
+
+  // Estado de propuesta
+  state.ultimaPropuesta = null;
+  state.items = [];
+  state.agrupado = { playa: { manana: [], tarde: [], noche: [] }, shop: { manana: [], tarde: [] } };
+
+  renderTablaItems([]);
+  renderPropuestaResumen(null);
+  renderPropuestaTabla([]);
+
+  btnConfirmar.disabled = true;
 }
 
 async function onCargarGuardado() {

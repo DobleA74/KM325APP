@@ -14,24 +14,65 @@ const sqlite3 = require("sqlite3").verbose();
 const app = express();
 
 // View engine (MVC)
-app.set('view engine', 'ejs');
-app.set('views', path.join(__dirname, 'views'));
+app.set("view engine", "ejs");
+app.set("views", path.join(__dirname, "views"));
 
 const PORT = 3001;
 
 app.use(express.json({ limit: "2mb" }));
 
 // Page routes (rendered with EJS)
-const pagesRoutes = require('./routes/pages.routes');
+const pagesRoutes = require("./routes/pages.routes");
 app.use(pagesRoutes);
 
 // Static assets
-app.use(express.static(path.join(__dirname, 'public'), { index: false }));
+app.use(express.static(path.join(__dirname, "public"), { index: false }));
 
 /* ===============================
    SQLITE
 ================================ */
-const db = new sqlite3.Database("km325.db");
+// DB auto-detect: usa el archivo existente (evita abrir una DB vacía por error de ruta).
+// Podés forzar una ruta con la variable de entorno KM325_DB_PATH.
+function dbAll(sql, params = []) {
+  return new Promise((resolve, reject) => {
+    db.all(sql, params, (err, rows) => (err ? reject(err) : resolve(rows)));
+  });
+}
+function dbGet(sql, params = []) {
+  return new Promise((resolve, reject) => {
+    db.get(sql, params, (err, row) => (err ? reject(err) : resolve(row)));
+  });
+}
+
+const pickExistingDb = () => {
+  const candidates = [
+    process.env.KM325_DB_PATH,
+    path.join(__dirname, "km325.db"),
+    path.join(process.cwd(), "km325.db"),
+    path.join(__dirname, "db", "km325.db"),
+    path.join(__dirname, "data", "km325.db"),
+    path.join(process.cwd(), "db", "km325.db"),
+    path.join(process.cwd(), "data", "km325.db"),
+  ].filter(Boolean);
+
+  const existing = candidates
+    .map((p) => ({
+      p,
+      ok: fs.existsSync(p),
+      size: fs.existsSync(p) ? fs.statSync(p).size || 0 : 0,
+    }))
+    .filter((x) => x.ok);
+
+  if (!existing.length) return path.join(__dirname, "km325.db");
+
+  // Elegimos el de mayor tamaño (suele ser el que tiene datos)
+  existing.sort((a, b) => b.size - a.size);
+  return existing[0].p;
+};
+
+const dbPath = pickExistingDb();
+console.log("[KM325] DB:", dbPath);
+const db = new sqlite3.Database(dbPath);
 
 // Promise helpers (para endpoints async)
 function allSql(sql, params = []) {
@@ -48,9 +89,13 @@ function addColumnIfMissing(table, colName, colDefSql) {
   return new Promise((resolve) => {
     db.all(`PRAGMA table_info(${table})`, [], (err, rows) => {
       if (err) return resolve(false);
-      const exists = (rows || []).some((r) => String(r.name).toLowerCase() === String(colName).toLowerCase());
+      const exists = (rows || []).some(
+        (r) => String(r.name).toLowerCase() === String(colName).toLowerCase(),
+      );
       if (exists) return resolve(false);
-      db.run(`ALTER TABLE ${table} ADD COLUMN ${colDefSql}`, [], () => resolve(true));
+      db.run(`ALTER TABLE ${table} ADD COLUMN ${colDefSql}`, [], () =>
+        resolve(true),
+      );
     });
   });
 }
@@ -70,54 +115,56 @@ function sectorKey(v) {
 // - 'MINI' suele ser el Shop (Mini/tienda)
 function sectorGroup(v) {
   const s = sectorKey(v);
-  if (!s) return '';
-  if (s.includes('playa')) return 'playa';
-  if (s.includes('shop') || s.includes('mini') || s.includes('tienda')) return 'shop';
-  if (s.includes('admin') || s.includes('administr')) return 'admin';
+  if (!s) return "";
+  if (s.includes("playa")) return "playa";
+  if (s.includes("shop") || s.includes("mini") || s.includes("tienda"))
+    return "shop";
+  if (s.includes("admin") || s.includes("administr")) return "admin";
   return s;
 }
 
 function turnosPorSector(sector) {
   const g = sectorGroup(sector);
-  if (g === 'shop') return ['mañana', 'tarde']; // Shop/Mini no tiene noche
-  if (g === 'playa') return ['mañana', 'tarde', 'noche'];
-  return ['mañana', 'tarde', 'noche']; // fallback
+  if (g === "shop") return ["mañana", "tarde"]; // Shop/Mini no tiene noche
+  if (g === "playa") return ["mañana", "tarde", "noche"];
+  return ["mañana", "tarde", "noche"]; // fallback
 }
 
 function turnoWindow(sector, turno) {
   // minutos desde 00:00 del día (fecha_entrada)
   // Playa: mañana 05-13, tarde 13-21, noche 21-05
   // Shop/Mini: mañana 06-14, tarde 14-22
-  const t = String(turno || '').toLowerCase();
+  const t = String(turno || "").toLowerCase();
   const g = sectorGroup(sector);
 
-  if (g === 'shop') {
-    if (t === 'mañana' || t === 'manana') return { start: 6 * 60, end: 14 * 60 };
-    if (t === 'tarde') return { start: 14 * 60, end: 22 * 60 };
+  if (g === "shop") {
+    if (t === "mañana" || t === "manana")
+      return { start: 6 * 60, end: 14 * 60 };
+    if (t === "tarde") return { start: 14 * 60, end: 22 * 60 };
     return { start: 0, end: 24 * 60 };
   }
 
   // default: Playa / otros
-  if (t === 'mañana' || t === 'manana') return { start: 5 * 60, end: 13 * 60 };
-  if (t === 'tarde') return { start: 13 * 60, end: 21 * 60 };
-  if (t === 'noche') return { start: 21 * 60, end: 29 * 60 }; // 05:00 del día siguiente
+  if (t === "mañana" || t === "manana") return { start: 5 * 60, end: 13 * 60 };
+  if (t === "tarde") return { start: 13 * 60, end: 21 * 60 };
+  if (t === "noche") return { start: 21 * 60, end: 29 * 60 }; // 05:00 del día siguiente
   return { start: 0, end: 24 * 60 };
 }
 
 // Devuelve una ventana de turno usando un "cfg" por puesto (si existe).
 // cfg: { manana_start, manana_end, tarde_start, tarde_end, noche_start, noche_end }
 function turnoWindowByCfg(cfg, turno) {
-  const t = String(turno || '').toLowerCase();
+  const t = String(turno || "").toLowerCase();
   if (!cfg) return null;
-  if (t === 'mañana' || t === 'manana') {
+  if (t === "mañana" || t === "manana") {
     if (cfg.manana_start == null || cfg.manana_end == null) return null;
     return { start: Number(cfg.manana_start), end: Number(cfg.manana_end) };
   }
-  if (t === 'tarde') {
+  if (t === "tarde") {
     if (cfg.tarde_start == null || cfg.tarde_end == null) return null;
     return { start: Number(cfg.tarde_start), end: Number(cfg.tarde_end) };
   }
-  if (t === 'noche') {
+  if (t === "noche") {
     if (cfg.noche_start == null || cfg.noche_end == null) return null;
     return { start: Number(cfg.noche_start), end: Number(cfg.noche_end) };
   }
@@ -125,8 +172,9 @@ function turnoWindowByCfg(cfg, turno) {
 }
 
 function turnosPorCfg(cfg, sectorFallback) {
-  if (cfg && cfg.noche_start != null && cfg.noche_end != null) return ['mañana', 'tarde', 'noche'];
-  if (cfg) return ['mañana', 'tarde'];
+  if (cfg && cfg.noche_start != null && cfg.noche_end != null)
+    return ["mañana", "tarde", "noche"];
+  if (cfg) return ["mañana", "tarde"];
   return turnosPorSector(sectorFallback);
 }
 
@@ -138,18 +186,27 @@ function overlapMinutes(aStart, aEnd, bStart, bEnd) {
 
 function isPuestoPlaya(puesto) {
   const p = String(puesto || "").toLowerCase();
-  return p.includes("playero") || p.includes("auxiliar de playa") || (p.includes("auxiliar") && p.includes("playa")) || p.includes("refuerzo") && p.includes("playa");
+  return (
+    p.includes("playero") ||
+    p.includes("auxiliar de playa") ||
+    (p.includes("auxiliar") && p.includes("playa")) ||
+    (p.includes("refuerzo") && p.includes("playa"))
+  );
 }
 
 function isPuestoShop(puesto) {
   const p = String(puesto || "").toLowerCase();
-  return p.includes("cajero") || p.includes("auxiliar de caja") || (p.includes("auxiliar") && p.includes("caja"));
+  return (
+    p.includes("cajero") ||
+    p.includes("auxiliar de caja") ||
+    (p.includes("auxiliar") && p.includes("caja"))
+  );
 }
 
 function puestoValidoParaSector(sector, puesto) {
   const g = sectorGroup(sector);
-  if (g === 'playa') return isPuestoPlaya(puesto);
-  if (g === 'shop') return isPuestoShop(puesto);
+  if (g === "playa") return isPuestoPlaya(puesto);
+  if (g === "shop") return isPuestoShop(puesto);
   return true;
 }
 
@@ -181,7 +238,9 @@ function esTarde(hhmm) {
 }
 
 function hhmmToMin(hhmm) {
-  const [h, m] = String(hhmm || "").split(":").map(Number);
+  const [h, m] = String(hhmm || "")
+    .split(":")
+    .map(Number);
   if (Number.isNaN(h) || Number.isNaN(m)) return null;
   return h * 60 + m;
 }
@@ -246,9 +305,30 @@ db.serialize(() => {
     )
   `);
 
+  db.run(`
+    CREATE TABLE IF NOT EXISTS calendario_avisos_cobertura (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      fecha TEXT NOT NULL,
+      sector TEXT NOT NULL,
+      puesto TEXT NOT NULL,
+      turno TEXT NOT NULL,
+      legajo_ausente TEXT,
+      tipo_ausencia TEXT,
+      legajo_reemplazo TEXT,
+      estado TEXT NOT NULL DEFAULT 'PENDIENTE',
+      created_at TEXT DEFAULT (datetime('now')),
+      resolved_at TEXT,
+      UNIQUE(fecha, sector, puesto, turno)
+    )
+  `);
   // Migraciones idempotentes (agregar columnas nuevas sin romper DB existente)
-  addColumnIfMissing('empleados', 'categoria', 'categoria TEXT');
-  addColumnIfMissing('empleados', 'fecha_ingreso', 'fecha_ingreso TEXT');
+  addColumnIfMissing("empleados", "categoria", "categoria TEXT");
+  addColumnIfMissing("empleados", "fecha_ingreso", "fecha_ingreso TEXT");
+  addColumnIfMissing(
+    "calendario_excepciones",
+    "sector_override",
+    "sector_override TEXT",
+  );
 
   // Migración: campos necesarios para Liquidación
   // - categoria: para vincular con escala salarial
@@ -393,7 +473,9 @@ db.serialize(() => {
   `);
 
   // Evita duplicar faltas de fichada por día (registro automático)
-  db.run(`CREATE UNIQUE INDEX IF NOT EXISTS ux_nov_falta_fichada ON novedades_rrhh(legajo, tipo, fecha_desde) WHERE tipo='FALTA_FICHADA'`);
+  db.run(
+    `CREATE UNIQUE INDEX IF NOT EXISTS ux_nov_falta_fichada ON novedades_rrhh(legajo, tipo, fecha_desde) WHERE tipo='FALTA_FICHADA'`,
+  );
 
   // Tardanzas: cálculo automático pero editable
   db.run(`
@@ -410,9 +492,9 @@ db.serialize(() => {
   `);
 
   // Migración tardanzas: campos para auditoría en UI (qué entrada se tomó y qué horario se esperaba)
-  addColumnIfMissing('tardanzas', 'turno', 'turno TEXT');
-  addColumnIfMissing('tardanzas', 'entrada_tomada', 'entrada_tomada TEXT');
-  addColumnIfMissing('tardanzas', 'inicio_turno', 'inicio_turno TEXT');
+  addColumnIfMissing("tardanzas", "turno", "turno TEXT");
+  addColumnIfMissing("tardanzas", "entrada_tomada", "entrada_tomada TEXT");
+  addColumnIfMissing("tardanzas", "inicio_turno", "inicio_turno TEXT");
 
   // Horarios por PUESTO (para tardanzas y asignación de turno)
   // Permite que dos personas del mismo sector tengan horarios distintos.
@@ -430,13 +512,15 @@ db.serialize(() => {
     )
   `);
 
-  db.run(`CREATE INDEX IF NOT EXISTS idx_puesto_horarios_puesto ON puesto_horarios(puesto)`);
+  db.run(
+    `CREATE INDEX IF NOT EXISTS idx_puesto_horarios_puesto ON puesto_horarios(puesto)`,
+  );
 
   // Vincular un patrón por defecto a un puesto (sin duplicar entidad "Puesto")
   // - patron_id: id de calendario_patrones
   // - patron_inicio: YYYY-MM-DD (fecha de inicio del ciclo para ese puesto)
-  addColumnIfMissing('puesto_horarios', 'patron_id', 'patron_id INTEGER');
-  addColumnIfMissing('puesto_horarios', 'patron_inicio', 'patron_inicio TEXT');
+  addColumnIfMissing("puesto_horarios", "patron_id", "patron_id INTEGER");
+  addColumnIfMissing("puesto_horarios", "patron_inicio", "patron_inicio TEXT");
 
   // ==========================
   // CALENDARIO: patrones + excepciones
@@ -476,40 +560,65 @@ db.serialize(() => {
       tipo TEXT NOT NULL,  -- CAMBIO/VACACIONES/LICENCIA/PERMISO/ENFERMEDAD/FRANCO_EXTRA
       puesto_override TEXT,
       turno_override TEXT,
+            sector_override TEXT,
       motivo TEXT,
       creado_en TEXT DEFAULT (datetime('now'))
     )
   `);
 
-  db.run(`CREATE INDEX IF NOT EXISTS idx_cal_ex_legajo_fecha ON calendario_excepciones(legajo, fecha)`);
+  db.run(
+    `CREATE INDEX IF NOT EXISTS idx_cal_ex_legajo_fecha ON calendario_excepciones(legajo, fecha)`,
+  );
 
   // Seed 2026 (idempotente: INSERT OR IGNORE)
   const feriados2026 = [
     // Nacionales (incluye trasladables ya aplicados)
-    ['2026-01-01', 'Año Nuevo', 'nacional'],
-    ['2026-02-16', 'Carnaval', 'nacional'],
-    ['2026-02-17', 'Carnaval', 'nacional'],
-    ['2026-03-24', 'Día Nacional de la Memoria por la Verdad y la Justicia', 'nacional'],
-    ['2026-04-02', 'Día del Veterano y de los Caídos en la Guerra de Malvinas', 'nacional'],
-    ['2026-04-03', 'Viernes Santo', 'nacional'],
-    ['2026-05-01', 'Día del Trabajador', 'nacional'],
-    ['2026-05-25', 'Día de la Revolución de Mayo', 'nacional'],
-    ['2026-06-15', 'Paso a la Inmortalidad del General Martín Miguel de Güemes (trasladado)', 'nacional'],
-    ['2026-06-20', 'Paso a la Inmortalidad del General Manuel Belgrano', 'nacional'],
-    ['2026-07-09', 'Día de la Independencia', 'nacional'],
-    ['2026-08-17', 'Paso a la Inmortalidad del Gral. José de San Martín (trasladable)', 'nacional'],
-    ['2026-10-12', 'Día del Respeto a la Diversidad Cultural', 'nacional'],
-    ['2026-11-23', 'Día de la Soberanía Nacional (trasladado)', 'nacional'],
-    ['2026-12-08', 'Inmaculada Concepción de María', 'nacional'],
-    ['2026-12-25', 'Navidad', 'nacional'],
+    ["2026-01-01", "Año Nuevo", "nacional"],
+    ["2026-02-16", "Carnaval", "nacional"],
+    ["2026-02-17", "Carnaval", "nacional"],
+    [
+      "2026-03-24",
+      "Día Nacional de la Memoria por la Verdad y la Justicia",
+      "nacional",
+    ],
+    [
+      "2026-04-02",
+      "Día del Veterano y de los Caídos en la Guerra de Malvinas",
+      "nacional",
+    ],
+    ["2026-04-03", "Viernes Santo", "nacional"],
+    ["2026-05-01", "Día del Trabajador", "nacional"],
+    ["2026-05-25", "Día de la Revolución de Mayo", "nacional"],
+    [
+      "2026-06-15",
+      "Paso a la Inmortalidad del General Martín Miguel de Güemes (trasladado)",
+      "nacional",
+    ],
+    [
+      "2026-06-20",
+      "Paso a la Inmortalidad del General Manuel Belgrano",
+      "nacional",
+    ],
+    ["2026-07-09", "Día de la Independencia", "nacional"],
+    [
+      "2026-08-17",
+      "Paso a la Inmortalidad del Gral. José de San Martín (trasladable)",
+      "nacional",
+    ],
+    ["2026-10-12", "Día del Respeto a la Diversidad Cultural", "nacional"],
+    ["2026-11-23", "Día de la Soberanía Nacional (trasladado)", "nacional"],
+    ["2026-12-08", "Inmaculada Concepción de María", "nacional"],
+    ["2026-12-25", "Navidad", "nacional"],
 
     // Turísticos (días no laborables con fines turísticos)
-    ['2026-03-23', 'Día no laborable con fines turísticos', 'turistico'],
-    ['2026-07-10', 'Día no laborable con fines turísticos', 'turistico'],
-    ['2026-12-07', 'Día no laborable con fines turísticos', 'turistico'],
+    ["2026-03-23", "Día no laborable con fines turísticos", "turistico"],
+    ["2026-07-10", "Día no laborable con fines turísticos", "turistico"],
+    ["2026-12-07", "Día no laborable con fines turísticos", "turistico"],
   ];
 
-  const stmtF = db.prepare("INSERT OR IGNORE INTO feriados (fecha, nombre, tipo) VALUES (?,?,?)");
+  const stmtF = db.prepare(
+    "INSERT OR IGNORE INTO feriados (fecha, nombre, tipo) VALUES (?,?,?)",
+  );
   feriados2026.forEach((row) => stmtF.run(row));
   stmtF.finalize();
 });
@@ -547,73 +656,100 @@ app.post("/importar", upload.single("archivo"), (req, res) => {
       grupos[key].push(f);
     }
 
-    db.all("SELECT legajo, sector, puesto, nombre FROM empleados", [], (err, empleados) => {
-      if (err) return res.status(500).json({ error: "DB empleados" });
+    db.all(
+      "SELECT legajo, sector, puesto, nombre FROM empleados",
+      [],
+      (err, empleados) => {
+        if (err) return res.status(500).json({ error: "DB empleados" });
 
-      const mapEmp = {};
-      (empleados || []).forEach((e) => {
-        const leg = normLegajo(e.legajo);
-        if (!leg) return;
-        mapEmp[leg] = { sector: e.sector || "", puesto: e.puesto || "", nombre: e.nombre || "" };
-      });
+        const mapEmp = {};
+        (empleados || []).forEach((e) => {
+          const leg = normLegajo(e.legajo);
+          if (!leg) return;
+          mapEmp[leg] = {
+            sector: e.sector || "",
+            puesto: e.puesto || "",
+            nombre: e.nombre || "",
+          };
+        });
 
-      const resumen = [];
+        const resumen = [];
 
-      for (const reg of Object.values(grupos)) {
-        reg.sort((a, b) => String(a.hora).localeCompare(String(b.hora)));
+        for (const reg of Object.values(grupos)) {
+          reg.sort((a, b) => String(a.hora).localeCompare(String(b.hora)));
 
-        const legajo = reg[0].legajo;
-        const fechaISO = reg[0].fechaISO;
+          const legajo = reg[0].legajo;
+          const fechaISO = reg[0].fechaISO;
 
-        const puesto = (mapEmp[legajo]?.puesto || "").trim();
-        const sector = (mapEmp[legajo]?.sector || reg[0].sector || "").trim();
-        const nombre = (mapEmp[legajo]?.nombre || reg[0].nombre || "").trim();
+          const puesto = (mapEmp[legajo]?.puesto || "").trim();
+          const sector = (mapEmp[legajo]?.sector || reg[0].sector || "").trim();
+          const nombre = (mapEmp[legajo]?.nombre || reg[0].nombre || "").trim();
 
-        const times = reg.map((x) => x.hora).filter(Boolean);
-        if (!times.length) continue;
+          const times = reg.map((x) => x.hora).filter(Boolean);
+          if (!times.length) continue;
 
-        const first = times[0];
-        const last = times[times.length - 1];
+          const first = times[0];
+          const last = times[times.length - 1];
 
-        // Playero: si hay temprano y tarde mismo día, lo partimos (cierre anterior + apertura)
-        if (isPlayero(puesto) && esTemprano(first) && esTarde(last) && first !== last) {
+          // Playero: si hay temprano y tarde mismo día, lo partimos (cierre anterior + apertura)
+          if (
+            isPlayero(puesto) &&
+            esTemprano(first) &&
+            esTarde(last) &&
+            first !== last
+          ) {
+            resumen.push({
+              legajo,
+              nombre,
+              sector,
+              puesto,
+              fecha: fechaISO,
+              entrada: first,
+              salida: first,
+              fecha_salida: fechaISO,
+              horas: 0,
+              nocturnas: 0,
+            });
+            resumen.push({
+              legajo,
+              nombre,
+              sector,
+              puesto,
+              fecha: fechaISO,
+              entrada: last,
+              salida: last,
+              fecha_salida: fechaISO,
+              horas: 0,
+              nocturnas: 0,
+            });
+            continue;
+          }
+
           resumen.push({
-            legajo, nombre, sector, puesto,
+            legajo,
+            nombre,
+            sector,
+            puesto,
             fecha: fechaISO,
             entrada: first,
-            salida: first,
-            fecha_salida: fechaISO,
-            horas: 0, nocturnas: 0,
-          });
-          resumen.push({
-            legajo, nombre, sector, puesto,
-            fecha: fechaISO,
-            entrada: last,
             salida: last,
             fecha_salida: fechaISO,
-            horas: 0, nocturnas: 0,
+            horas: 0,
+            nocturnas: 0,
           });
-          continue;
         }
 
-        resumen.push({
-          legajo, nombre, sector, puesto,
-          fecha: fechaISO,
-          entrada: first,
-          salida: last,
-          fecha_salida: fechaISO,
-          horas: 0, nocturnas: 0,
+        try {
+          fs.unlinkSync(req.file.path);
+        } catch {}
+
+        res.json({
+          registros_originales: fichadas.length,
+          registros_procesados: resumen.length,
+          ejemplo: resumen,
         });
-      }
-
-      try { fs.unlinkSync(req.file.path); } catch {}
-
-      res.json({
-        registros_originales: fichadas.length,
-        registros_procesados: resumen.length,
-        ejemplo: resumen,
-      });
-    });
+      },
+    );
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: "Error importando" });
@@ -649,7 +785,9 @@ app.post("/api/asistencias/confirmar", (req, res) => {
     if (!r) {
       return stmt.finalize(async () => {
         try {
-          const faltas = await detectarFaltaFichada(Array.from(fechasConfirmadas));
+          const faltas = await detectarFaltaFichada(
+            Array.from(fechasConfirmadas),
+          );
           const total = faltas.reduce((acc, x) => acc + (x.count || 0), 0);
 
           res.json({
@@ -664,7 +802,13 @@ app.post("/api/asistencias/confirmar", (req, res) => {
         } catch (e) {
           console.error(e);
           // Si falla el control, no rompemos la confirmación
-          res.json({ ok: true, insertados, ignorados, abiertas_creadas, abiertas_cerradas });
+          res.json({
+            ok: true,
+            insertados,
+            ignorados,
+            abiertas_creadas,
+            abiertas_cerradas,
+          });
         }
       });
     }
@@ -722,14 +866,16 @@ app.post("/api/asistencias/confirmar", (req, res) => {
                 if (!e2 && this && this.changes === 1) abiertas_creadas++;
                 else ignorados++;
                 return next();
-              }
+              },
             );
             return;
           }
 
           // Si HAY abierta previa -> cerramos
           const horas = Number(diffHoras(abierta.entrada, entrada).toFixed(2));
-          const noct = Number(nocturnasHoras(abierta.entrada, entrada).toFixed(2));
+          const noct = Number(
+            nocturnasHoras(abierta.entrada, entrada).toFixed(2),
+          );
 
           stmt.run(
             [
@@ -748,13 +894,17 @@ app.post("/api/asistencias/confirmar", (req, res) => {
               if (!e3 && this && this.changes === 1) insertados++;
               else ignorados++;
 
-              db.run(`DELETE FROM jornadas_abiertas WHERE id=?`, [abierta.id], () => {
-                abiertas_cerradas++;
-                next();
-              });
-            }
+              db.run(
+                `DELETE FROM jornadas_abiertas WHERE id=?`,
+                [abierta.id],
+                () => {
+                  abiertas_cerradas++;
+                  next();
+                },
+              );
+            },
           );
-        }
+        },
       );
       return;
     }
@@ -771,7 +921,7 @@ app.post("/api/asistencias/confirmar", (req, res) => {
         function (err2) {
           if (!err2 && this && this.changes === 1) abiertas_creadas++;
           next();
-        }
+        },
       );
       return;
     }
@@ -783,38 +933,72 @@ app.post("/api/asistencias/confirmar", (req, res) => {
     }
 
     // 4) asistencia normal
-    const horas = Number((r.horas != null ? r.horas : diffHoras(entrada, salida)).toFixed(2));
-    const noct = Number((r.nocturnas != null ? r.nocturnas : nocturnasHoras(entrada, salida)).toFixed(2));
+    const horas = Number(
+      (r.horas != null ? r.horas : diffHoras(entrada, salida)).toFixed(2),
+    );
+    const noct = Number(
+      (r.nocturnas != null
+        ? r.nocturnas
+        : nocturnasHoras(entrada, salida)
+      ).toFixed(2),
+    );
 
     stmt.run(
-      [legajo, nombre, sector, puesto, fecha, fecha_salida, entrada, salida, horas, noct],
+      [
+        legajo,
+        nombre,
+        sector,
+        puesto,
+        fecha,
+        fecha_salida,
+        entrada,
+        salida,
+        horas,
+        noct,
+      ],
       function (err3) {
         if (!err3 && this && this.changes === 1) insertados++;
         else ignorados++;
         next();
-      }
+      },
     );
   }
 
   async function detectarFaltaFichada(fechasISO) {
-    const fechas = (fechasISO || []).filter((f) => /^\d{4}-\d{2}-\d{2}$/.test(String(f)));
+    const fechas = (fechasISO || []).filter((f) =>
+      /^\d{4}-\d{2}-\d{2}$/.test(String(f)),
+    );
     if (!fechas.length) return [];
 
     const normTurno = (t) => {
-      const s = String(t || '').trim().toUpperCase();
-      if (!s) return '';
-      if (['M', 'MAÑANA', 'MANANA', 'MANIANA'].includes(s)) return 'MANIANA';
-      if (['T', 'TARDE'].includes(s)) return 'TARDE';
-      if (['N', 'NOCHE'].includes(s)) return 'NOCHE';
-      if (['F', 'FRANCO', 'LIBRE', 'DESCANSO'].includes(s)) return 'FRANCO';
-      if (['A', 'AUSENCIA', 'VACACIONES', 'LICENCIA', 'PERMISO', 'ENFERMEDAD'].includes(s)) return 'AUSENCIA';
+      const s = String(t || "")
+        .trim()
+        .toUpperCase();
+      if (!s) return "";
+      if (["M", "MAÑANA", "MANANA", "MANIANA"].includes(s)) return "MANIANA";
+      if (["T", "TARDE"].includes(s)) return "TARDE";
+      if (["N", "NOCHE"].includes(s)) return "NOCHE";
+      if (["F", "FRANCO", "LIBRE", "DESCANSO"].includes(s)) return "FRANCO";
+      if (
+        [
+          "A",
+          "AUSENCIA",
+          "VACACIONES",
+          "LICENCIA",
+          "PERMISO",
+          "ENFERMEDAD",
+        ].includes(s)
+      )
+        return "AUSENCIA";
       return s;
     };
 
     // Para el control de "Falta de fichada" tomamos el padrón completo de empleados.
     // Si alguien está realmente inactivo, normalmente no estará programado por patrón/excepción,
     // pero si aparece en calendario, lo queremos controlar igual.
-    const empleados = await allSql('SELECT legajo, nombre, sector, puesto FROM empleados');
+    const empleados = await allSql(
+      "SELECT legajo, nombre, sector, puesto FROM empleados",
+    );
     const empMap = new Map();
     for (const e of empleados || []) {
       const leg = normLegajo(e.legajo);
@@ -823,20 +1007,27 @@ app.post("/api/asistencias/confirmar", (req, res) => {
     }
 
     // Patrones por puesto (config avanzada)
-    const phRows = await allSql('SELECT puesto, patron_id, patron_inicio FROM puesto_horarios WHERE patron_id IS NOT NULL');
+    const phRows = await allSql(
+      "SELECT puesto, patron_id, patron_inicio FROM puesto_horarios WHERE patron_id IS NOT NULL",
+    );
     const puestoPatronMap = new Map(); // puesto -> { patron_id, patron_inicio }
     for (const r of phRows || []) {
-      const p = String(r.puesto || '').trim();
+      const p = String(r.puesto || "").trim();
       const pid = r.patron_id != null ? Number(r.patron_id) : null;
       const ini = r.patron_inicio ? String(r.patron_inicio) : null;
-      if (p && pid) puestoPatronMap.set(p.toUpperCase(), { patron_id: pid, patron_inicio: ini });
+      if (p && pid)
+        puestoPatronMap.set(p.toUpperCase(), {
+          patron_id: pid,
+          patron_inicio: ini,
+        });
     }
 
     // Asignaciones de patrón (una por legajo)
-    const asigns = await allSql('SELECT * FROM calendario_empleado_patron');
+    const asigns = await allSql("SELECT * FROM calendario_empleado_patron");
     const asignMap = new Map();
     const patronIds = new Set();
-    for (const v of puestoPatronMap.values()) patronIds.add(Number(v.patron_id));
+    for (const v of puestoPatronMap.values())
+      patronIds.add(Number(v.patron_id));
     for (const a of asigns || []) {
       const leg = normLegajo(a.legajo);
       if (!leg) continue;
@@ -848,24 +1039,32 @@ app.post("/api/asistencias/confirmar", (req, res) => {
     const patronMap = new Map();
     const detByPatron = new Map(); // patron_id -> Map(dia_idx -> row)
     for (const pid of patronIds) {
-      const p = (await allSql('SELECT * FROM calendario_patrones WHERE id=?', [pid]))[0];
+      const p = (
+        await allSql("SELECT * FROM calendario_patrones WHERE id=?", [pid])
+      )[0];
       if (!p) continue;
       patronMap.set(pid, p);
-      const det = await allSql('SELECT * FROM calendario_patron_detalle WHERE patron_id=?', [pid]);
-      detByPatron.set(pid, new Map((det || []).map((d) => [Number(d.dia_idx), d])));
+      const det = await allSql(
+        "SELECT * FROM calendario_patron_detalle WHERE patron_id=?",
+        [pid],
+      );
+      detByPatron.set(
+        pid,
+        new Map((det || []).map((d) => [Number(d.dia_idx), d])),
+      );
     }
 
     // Excepciones para el rango de fechas confirmado
     const minF = fechas.slice().sort()[0];
     const maxF = fechas.slice().sort().slice(-1)[0];
     const exRows = await allSql(
-      'SELECT * FROM calendario_excepciones WHERE fecha BETWEEN ? AND ?',
-      [minF, maxF]
+      "SELECT * FROM calendario_excepciones WHERE fecha BETWEEN ? AND ?",
+      [minF, maxF],
     );
     const exMap = new Map(); // key leg|fecha -> ex
     for (const ex of exRows || []) {
       const leg = normLegajo(ex.legajo);
-      const f = String(ex.fecha || '');
+      const f = String(ex.fecha || "");
       if (!leg || !f) continue;
       exMap.set(`${leg}|${f}`, ex);
     }
@@ -877,16 +1076,19 @@ app.post("/api/asistencias/confirmar", (req, res) => {
       const programados = [];
       for (const [leg, emp] of empMap.entries()) {
         const ex = exMap.get(`${leg}|${fecha}`);
-        let turno = '';
-        let puesto = '';
+        let turno = "";
+        let puesto = "";
 
         if (ex) {
-          turno = ex.turno_override ? normTurno(ex.turno_override) : '';
-          puesto = ex.puesto_override || emp.puesto || '';
+          turno = ex.turno_override ? normTurno(ex.turno_override) : "";
+          puesto = ex.puesto_override || emp.puesto || "";
           if (!turno) {
-            const tipo = String(ex.tipo || '').toUpperCase();
-            if (['VACACIONES', 'LICENCIA', 'PERMISO', 'ENFERMEDAD'].includes(tipo)) turno = 'AUSENCIA';
-            if (tipo === 'FRANCO_EXTRA') turno = 'FRANCO';
+            const tipo = String(ex.tipo || "").toUpperCase();
+            if (
+              ["VACACIONES", "LICENCIA", "PERMISO", "ENFERMEDAD"].includes(tipo)
+            )
+              turno = "AUSENCIA";
+            if (tipo === "FRANCO_EXTRA") turno = "FRANCO";
           }
         } else {
           const as = asignMap.get(leg);
@@ -896,14 +1098,20 @@ app.post("/api/asistencias/confirmar", (req, res) => {
             const detMap = detByPatron.get(pid) || new Map();
             if (patron) {
               const diff = daysBetween(as.fecha_inicio, fecha);
-              const idx = ((diff % patron.ciclo_dias) + patron.ciclo_dias) % patron.ciclo_dias;
+              const idx =
+                ((diff % patron.ciclo_dias) + patron.ciclo_dias) %
+                patron.ciclo_dias;
               const d = detMap.get(idx);
-              turno = d ? normTurno(d.turno) : 'FRANCO';
-              puesto = d && d.puesto ? d.puesto : (emp.puesto || '');
+              turno = d ? normTurno(d.turno) : "FRANCO";
+              puesto = d && d.puesto ? d.puesto : emp.puesto || "";
             }
           } else {
             // Si el empleado no tiene patrón asignado, probamos patrón por puesto
-            const pp = puestoPatronMap.get(String(emp.puesto || '').trim().toUpperCase());
+            const pp = puestoPatronMap.get(
+              String(emp.puesto || "")
+                .trim()
+                .toUpperCase(),
+            );
             if (pp) {
               const pid = Number(pp.patron_id);
               const patron = patronMap.get(pid);
@@ -911,36 +1119,52 @@ app.post("/api/asistencias/confirmar", (req, res) => {
               const inicio = pp.patron_inicio || fecha; // fallback
               if (patron) {
                 const diff = daysBetween(inicio, fecha);
-                const idx = ((diff % patron.ciclo_dias) + patron.ciclo_dias) % patron.ciclo_dias;
+                const idx =
+                  ((diff % patron.ciclo_dias) + patron.ciclo_dias) %
+                  patron.ciclo_dias;
                 const d = detMap.get(idx);
-                turno = d ? normTurno(d.turno) : 'FRANCO';
-                puesto = d && d.puesto ? d.puesto : (emp.puesto || '');
+                turno = d ? normTurno(d.turno) : "FRANCO";
+                puesto = d && d.puesto ? d.puesto : emp.puesto || "";
               } else {
-                turno = '';
-                puesto = emp.puesto || '';
+                turno = "";
+                puesto = emp.puesto || "";
               }
             } else {
-              turno = '';
-              puesto = emp.puesto || '';
+              turno = "";
+              puesto = emp.puesto || "";
             }
           }
         }
 
-        if (['MANIANA', 'TARDE', 'NOCHE'].includes(String(turno).toUpperCase())) {
-          programados.push({ legajo: leg, nombre: emp.nombre || '', sector: emp.sector || '', puesto: puesto || emp.puesto || '', turno });
+        if (
+          ["MANIANA", "TARDE", "NOCHE"].includes(String(turno).toUpperCase())
+        ) {
+          programados.push({
+            legajo: leg,
+            nombre: emp.nombre || "",
+            sector: emp.sector || "",
+            puesto: puesto || emp.puesto || "",
+            turno,
+          });
         }
       }
 
       if (!programados.length) continue;
 
       // Quién fichó (asistencias + abiertas) ese día
-      const asisRows = await allSql('SELECT DISTINCT legajo FROM asistencias WHERE fecha_entrada = ?', [fecha]);
-      const abRows = await allSql('SELECT DISTINCT legajo FROM jornadas_abiertas WHERE fecha_entrada = ?', [fecha]);
+      const asisRows = await allSql(
+        "SELECT DISTINCT legajo FROM asistencias WHERE fecha_entrada = ?",
+        [fecha],
+      );
+      const abRows = await allSql(
+        "SELECT DISTINCT legajo FROM jornadas_abiertas WHERE fecha_entrada = ?",
+        [fecha],
+      );
       const presentes = new Set(
         []
           .concat((asisRows || []).map((r) => normLegajo(r.legajo)))
           .concat((abRows || []).map((r) => normLegajo(r.legajo)))
-          .filter(Boolean)
+          .filter(Boolean),
       );
 
       const faltantes = programados.filter((p) => !presentes.has(p.legajo));
@@ -970,22 +1194,33 @@ app.get("/api/empleados", (req, res) => {
 });
 
 app.post("/api/empleados", (req, res) => {
-  const { legajo, nombre, sector, puesto, categoria, fecha_ingreso } = req.body || {};
+  const { legajo, nombre, sector, puesto, categoria, fecha_ingreso } =
+    req.body || {};
   const L = normLegajo(legajo);
   if (!L) return res.status(400).json({ error: "Falta legajo" });
 
   const cat = String(categoria || "").trim();
   const fi = String(fecha_ingreso || "").trim();
   const fiOk = !fi || /^\d{4}-\d{2}-\d{2}$/.test(fi);
-  if (!fiOk) return res.status(400).json({ error: "Fecha ingreso inválida (YYYY-MM-DD)" });
+  if (!fiOk)
+    return res
+      .status(400)
+      .json({ error: "Fecha ingreso inválida (YYYY-MM-DD)" });
 
   db.run(
     "INSERT OR REPLACE INTO empleados (legajo,nombre,sector,puesto,categoria,fecha_ingreso,activo) VALUES (?,?,?,?,?,?,1)",
-    [L, String(nombre || ""), String(sector || ""), String(puesto || ""), cat, fi],
+    [
+      L,
+      String(nombre || ""),
+      String(sector || ""),
+      String(puesto || ""),
+      cat,
+      fi,
+    ],
     (err) => {
       if (err) return res.status(500).json({ error: "DB error" });
       res.json({ ok: true });
-    }
+    },
   );
 });
 
@@ -997,12 +1232,11 @@ app.delete("/api/empleados/:legajo", (req, res) => {
   });
 });
 
-
 /* ===============================
    PUESTOS / HORARIOS (API)
    Tabla: puesto_horarios
 ================================ */
-app.get('/api/puestos/catalogo', (req, res) => {
+app.get("/api/puestos/catalogo", (req, res) => {
   db.all(
     `SELECT DISTINCT TRIM(puesto) AS puesto
      FROM empleados
@@ -1010,13 +1244,13 @@ app.get('/api/puestos/catalogo', (req, res) => {
      ORDER BY TRIM(puesto)`,
     [],
     (err, rows) => {
-      if (err) return res.status(500).json({ ok: false, error: 'DB error' });
-      res.json({ ok: true, items: (rows || []).map(r => r.puesto) });
-    }
+      if (err) return res.status(500).json({ ok: false, error: "DB error" });
+      res.json({ ok: true, items: (rows || []).map((r) => r.puesto) });
+    },
   );
 });
 
-app.get('/api/puestos', (req, res) => {
+app.get("/api/puestos", (req, res) => {
   db.all(
     `SELECT ph.puesto, ph.manana_start, ph.manana_end, ph.tarde_start, ph.tarde_end, ph.noche_start, ph.noche_end,
             ph.patron_id, ph.patron_inicio,
@@ -1026,11 +1260,11 @@ app.get('/api/puestos', (req, res) => {
      ORDER BY ph.puesto`,
     [],
     (err, rows) => {
-      if (err) return res.status(500).json({ ok: false, error: 'DB error' });
+      if (err) return res.status(500).json({ ok: false, error: "DB error" });
 
       const items = (rows || []).map((r) => {
         const toRange = (a, b) => {
-          if (a == null || b == null) return '';
+          if (a == null || b == null) return "";
           return `${minToHHMM(a)}-${minToHHMM(b)}`;
         };
         return {
@@ -1051,18 +1285,28 @@ app.get('/api/puestos', (req, res) => {
       });
 
       res.json({ ok: true, items });
-    }
+    },
   );
 });
 
-app.post('/api/puestos', (req, res) => {
-  const { puesto, manana_start, manana_end, tarde_start, tarde_end, noche_start, noche_end, patron_id, patron_inicio } = req.body || {};
-  const p = String(puesto || '').trim();
-  if (!p) return res.status(400).json({ ok: false, error: 'Falta puesto' });
+app.post("/api/puestos", (req, res) => {
+  const {
+    puesto,
+    manana_start,
+    manana_end,
+    tarde_start,
+    tarde_end,
+    noche_start,
+    noche_end,
+    patron_id,
+    patron_inicio,
+  } = req.body || {};
+  const p = String(puesto || "").trim();
+  if (!p) return res.status(400).json({ ok: false, error: "Falta puesto" });
 
   const parseTime = (v) => {
-    if (v === null || v === undefined || v === '') return null;
-    if (typeof v === 'number' && Number.isFinite(v)) return Math.trunc(v);
+    if (v === null || v === undefined || v === "") return null;
+    if (typeof v === "number" && Number.isFinite(v)) return Math.trunc(v);
     const s = String(v).trim();
     if (/^\d+$/.test(s)) return clampInt(Number(s), 0);
     const m = s.match(/^(\d{1,2}):(\d{2})$/);
@@ -1082,7 +1326,10 @@ app.post('/api/puestos', (req, res) => {
   // Si el fin de noche es menor/igual al inicio, asumimos que cruza medianoche.
   if (ns != null && ne != null && ne <= ns) ne += 1440;
 
-  const pid = patron_id === null || patron_id === undefined || patron_id === '' ? null : Number(patron_id);
+  const pid =
+    patron_id === null || patron_id === undefined || patron_id === ""
+      ? null
+      : Number(patron_id);
   const pinicio = patron_inicio ? String(patron_inicio) : null;
 
   db.run(
@@ -1101,18 +1348,18 @@ app.post('/api/puestos', (req, res) => {
     `,
     [p, ms, me, ts, te, ns, ne, pid, pinicio],
     function (err) {
-      if (err) return res.status(500).json({ ok: false, error: 'DB error' });
+      if (err) return res.status(500).json({ ok: false, error: "DB error" });
       res.json({ ok: true, changes: this.changes });
-    }
+    },
   );
 });
 
-app.delete('/api/puestos/:puesto', (req, res) => {
-  const p = String(req.params.puesto || '').trim();
-  if (!p) return res.status(400).json({ ok: false, error: 'Puesto inválido' });
+app.delete("/api/puestos/:puesto", (req, res) => {
+  const p = String(req.params.puesto || "").trim();
+  if (!p) return res.status(400).json({ ok: false, error: "Puesto inválido" });
 
   db.run(`DELETE FROM puesto_horarios WHERE puesto=?`, [p], function (err) {
-    if (err) return res.status(500).json({ ok: false, error: 'DB error' });
+    if (err) return res.status(500).json({ ok: false, error: "DB error" });
     res.json({ ok: true, changes: this.changes });
   });
 });
@@ -1120,11 +1367,12 @@ app.delete('/api/puestos/:puesto', (req, res) => {
 /* ===============================
    NOVEDADES RRHH (API)
 ================================ */
-app.post('/api/novedades/falta-fichada', async (req, res) => {
+app.post("/api/novedades/falta-fichada", async (req, res) => {
   try {
     const { faltas } = req.body || {};
     const arr = Array.isArray(faltas) ? faltas : [];
-    if (!arr.length) return res.status(400).json({ ok: false, error: 'Sin faltas' });
+    if (!arr.length)
+      return res.status(400).json({ ok: false, error: "Sin faltas" });
 
     // armamos inserts (una por legajo y fecha)
     const ins = db.prepare(`
@@ -1137,23 +1385,24 @@ app.post('/api/novedades/falta-fichada', async (req, res) => {
     let ignorados = 0;
 
     for (const f of arr) {
-      const fecha = String(f.fecha || '').trim();
-      const legs = (f.legajos || f.legajo || f.items || f.empleados || []);
-      const list = Array.isArray(legs)
-        ? legs
-        : [legs];
+      const fecha = String(f.fecha || "").trim();
+      const legs = f.legajos || f.legajo || f.items || f.empleados || [];
+      const list = Array.isArray(legs) ? legs : [legs];
 
       for (const it of list) {
-        const leg = normLegajo(typeof it === 'string' ? it : it?.legajo);
+        const leg = normLegajo(typeof it === "string" ? it : it?.legajo);
         if (!leg || !/^\d{4}-\d{2}-\d{2}$/.test(fecha)) continue;
 
         const obs = `Auto: Falta de fichada detectada al confirmar asistencias (${fecha})`;
         await new Promise((resolve) => {
-          ins.run([leg, 'FALTA_FICHADA', fecha, fecha, 1, obs, 0], function (e) {
-            if (!e && this && this.changes === 1) insertados++;
-            else ignorados++;
-            resolve();
-          });
+          ins.run(
+            [leg, "FALTA_FICHADA", fecha, fecha, 1, obs, 0],
+            function (e) {
+              if (!e && this && this.changes === 1) insertados++;
+              else ignorados++;
+              resolve();
+            },
+          );
         });
       }
     }
@@ -1161,7 +1410,7 @@ app.post('/api/novedades/falta-fichada', async (req, res) => {
     ins.finalize(() => res.json({ ok: true, insertados, ignorados }));
   } catch (e) {
     console.error(e);
-    res.status(500).json({ ok: false, error: 'Error registrando faltas' });
+    res.status(500).json({ ok: false, error: "Error registrando faltas" });
   }
 });
 
@@ -1174,11 +1423,26 @@ app.get("/api/asistencias", (req, res) => {
   const where = [];
   const params = [];
 
-  if (desde) { where.push("fecha_entrada >= ?"); params.push(String(desde)); }
-  if (hasta) { where.push("fecha_entrada <= ?"); params.push(String(hasta)); }
-  if (legajo) { where.push("legajo = ?"); params.push(normLegajo(legajo)); }
-  if (puesto) { where.push("puesto = ?"); params.push(String(puesto)); }
-  if (sector) { where.push("sector = ?"); params.push(String(sector)); }
+  if (desde) {
+    where.push("fecha_entrada >= ?");
+    params.push(String(desde));
+  }
+  if (hasta) {
+    where.push("fecha_entrada <= ?");
+    params.push(String(hasta));
+  }
+  if (legajo) {
+    where.push("legajo = ?");
+    params.push(normLegajo(legajo));
+  }
+  if (puesto) {
+    where.push("puesto = ?");
+    params.push(String(puesto));
+  }
+  if (sector) {
+    where.push("sector = ?");
+    params.push(String(sector));
+  }
 
   const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
 
@@ -1202,7 +1466,7 @@ app.get("/api/asistencias", (req, res) => {
     (err, rows) => {
       if (err) return res.status(500).json({ error: "DB error" });
       res.json({ rows: rows || [] });
-    }
+    },
   );
 });
 
@@ -1210,7 +1474,8 @@ app.put("/api/asistencias/:id", (req, res) => {
   const id = Number(req.params.id);
   if (!id) return res.status(400).json({ ok: false, error: "ID inválido" });
 
-  const { fecha_entrada, entrada, fecha_salida, salida, puesto } = req.body || {};
+  const { fecha_entrada, entrada, fecha_salida, salida, puesto } =
+    req.body || {};
   if (!fecha_entrada || !entrada || !fecha_salida || !salida) {
     return res.status(400).json({ ok: false, error: "Faltan campos" });
   }
@@ -1224,11 +1489,20 @@ app.put("/api/asistencias/:id", (req, res) => {
     SET fecha_entrada=?, entrada=?, fecha_salida=?, salida=?, puesto=?, horas=?, nocturnas=?
     WHERE id=?
     `,
-    [String(fecha_entrada), String(entrada), String(fecha_salida), String(salida), String(puesto || ""), horas, noct, id],
+    [
+      String(fecha_entrada),
+      String(entrada),
+      String(fecha_salida),
+      String(salida),
+      String(puesto || ""),
+      horas,
+      noct,
+      id,
+    ],
     function (err) {
       if (err) return res.status(500).json({ ok: false, error: "DB error" });
       res.json({ ok: true, changes: this.changes });
-    }
+    },
   );
 });
 
@@ -1250,7 +1524,10 @@ app.get("/api/jornadas-abiertas", (req, res) => {
 
   const where = [];
   const params = [];
-  if (leg) { where.push("legajo=?"); params.push(leg); }
+  if (leg) {
+    where.push("legajo=?");
+    params.push(leg);
+  }
 
   const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
 
@@ -1265,12 +1542,13 @@ app.get("/api/jornadas-abiertas", (req, res) => {
     (err, rows) => {
       if (err) return res.status(500).json({ ok: false, error: "DB error" });
       res.json({ ok: true, rows: rows || [] });
-    }
+    },
   );
 });
 
 app.post("/api/jornadas-abiertas", (req, res) => {
-  const { legajo, nombre, sector, puesto, fecha_entrada, entrada } = req.body || {};
+  const { legajo, nombre, sector, puesto, fecha_entrada, entrada } =
+    req.body || {};
   const L = normLegajo(legajo);
 
   if (!L || !fecha_entrada || !entrada) {
@@ -1283,11 +1561,18 @@ app.post("/api/jornadas-abiertas", (req, res) => {
     (legajo,nombre,sector,puesto,fecha_entrada,entrada)
     VALUES (?,?,?,?,?,?)
     `,
-    [L, String(nombre || ""), String(sector || ""), String(puesto || ""), String(fecha_entrada), String(entrada)],
+    [
+      L,
+      String(nombre || ""),
+      String(sector || ""),
+      String(puesto || ""),
+      String(fecha_entrada),
+      String(entrada),
+    ],
     function (err) {
       if (err) return res.status(500).json({ ok: false, error: "DB error" });
       res.json({ ok: true, id: this.lastID, changes: this.changes });
-    }
+    },
   );
 });
 
@@ -1303,11 +1588,18 @@ app.put("/api/jornadas-abiertas/:id", (req, res) => {
     SET nombre=?, sector=?, puesto=?, fecha_entrada=?, entrada=?
     WHERE id=?
     `,
-    [String(nombre || ""), String(sector || ""), String(puesto || ""), String(fecha_entrada || ""), String(entrada || ""), id],
+    [
+      String(nombre || ""),
+      String(sector || ""),
+      String(puesto || ""),
+      String(fecha_entrada || ""),
+      String(entrada || ""),
+      id,
+    ],
     function (err) {
       if (err) return res.status(500).json({ ok: false, error: "DB error" });
       res.json({ ok: true, changes: this.changes });
-    }
+    },
   );
 });
 
@@ -1327,11 +1619,14 @@ app.post("/api/jornadas-abiertas/:id/cerrar", (req, res) => {
 
   const { fecha_salida, salida } = req.body || {};
   if (!fecha_salida || !salida) {
-    return res.status(400).json({ ok: false, error: "Faltan fecha_salida/salida" });
+    return res
+      .status(400)
+      .json({ ok: false, error: "Faltan fecha_salida/salida" });
   }
 
   db.get(`SELECT * FROM jornadas_abiertas WHERE id=?`, [id], (err, a) => {
-    if (err || !a) return res.status(404).json({ ok: false, error: "No encontrada" });
+    if (err || !a)
+      return res.status(404).json({ ok: false, error: "No encontrada" });
 
     const horas = Number(diffHoras(a.entrada, salida).toFixed(2));
     const noct = Number(nocturnasHoras(a.entrada, salida).toFixed(2));
@@ -1342,11 +1637,24 @@ app.post("/api/jornadas-abiertas/:id/cerrar", (req, res) => {
       (legajo,nombre,sector,puesto,fecha_entrada,fecha_salida,entrada,salida,horas,nocturnas)
       VALUES (?,?,?,?,?,?,?,?,?,?)
       `,
-      [a.legajo, a.nombre, a.sector, a.puesto, a.fecha_entrada, String(fecha_salida), a.entrada, String(salida), horas, noct],
+      [
+        a.legajo,
+        a.nombre,
+        a.sector,
+        a.puesto,
+        a.fecha_entrada,
+        String(fecha_salida),
+        a.entrada,
+        String(salida),
+        horas,
+        noct,
+      ],
       function (err2) {
         if (err2) return res.status(500).json({ ok: false, error: "DB error" });
-        db.run(`DELETE FROM jornadas_abiertas WHERE id=?`, [id], () => res.json({ ok: true }));
-      }
+        db.run(`DELETE FROM jornadas_abiertas WHERE id=?`, [id], () =>
+          res.json({ ok: true }),
+        );
+      },
     );
   });
 });
@@ -1366,7 +1674,7 @@ function getAsistenciasParaFecha(db, fecha, cb) {
     WHERE a.fecha_entrada = ? OR a.fecha_salida = ?
     `,
     [String(fecha), String(fecha)],
-    (err, rows) => cb(err, rows || [])
+    (err, rows) => cb(err, rows || []),
   );
 }
 
@@ -1377,7 +1685,10 @@ function asistenciaIntervalMin(a) {
   if (start == null || end == null) return null;
 
   // si cruza medianoche (o fecha_salida > fecha_entrada)
-  if (String(a.fecha_salida || "") > String(a.fecha_entrada || "") || end < start) {
+  if (
+    String(a.fecha_salida || "") > String(a.fecha_entrada || "") ||
+    end < start
+  ) {
     end += 1440;
   }
   return { start, end };
@@ -1395,7 +1706,9 @@ function filtrarPorSector(sectorObjetivo, a) {
 // - Shop/MINI: CAJERO/A
 function esEncargadoDeTurno(sector, puesto) {
   const g = sectorGroup(sector);
-  const p = String(puesto || "").trim().toUpperCase();
+  const p = String(puesto || "")
+    .trim()
+    .toUpperCase();
   if (g === "playa") return p === "PLAYERO/A";
   if (g === "shop") return p === "CAJERO/A";
   return false;
@@ -1440,7 +1753,10 @@ function calcParticipaciones({ fecha, sector, turno }, asistencias) {
     // Encargados: solo participan del turno inferido por su ENTRADA
     if (esEncargadoDeTurno(sector, puesto)) {
       const tAsig = inferirTurnoEncargado(sector, a.entrada);
-      if (tAsig && String(tAsig).toLowerCase() !== String(turno).toLowerCase()) {
+      if (
+        tAsig &&
+        String(tAsig).toLowerCase() !== String(turno).toLowerCase()
+      ) {
         continue;
       }
     }
@@ -1468,7 +1784,10 @@ function calcParticipaciones({ fecha, sector, turno }, asistencias) {
   return Object.values(parts).filter((x) => x.minutos > 0);
 }
 
-function upsertArqueo({ fecha, sector, turno, monto_diferencia, observaciones }, cb) {
+function upsertArqueo(
+  { fecha, sector, turno, monto_diferencia, observaciones },
+  cb,
+) {
   const f = String(fecha);
   const s = normSector(sector);
   const t = String(turno);
@@ -1489,9 +1808,9 @@ function upsertArqueo({ fecha, sector, turno, monto_diferencia, observaciones },
       db.get(
         `SELECT * FROM arqueos WHERE fecha=? AND sector=? AND turno=?`,
         [f, s, t],
-        (err2, row) => cb(err2, row)
+        (err2, row) => cb(err2, row),
       );
-    }
+    },
   );
 }
 
@@ -1502,23 +1821,36 @@ app.get("/api/arqueos", (req, res) => {
 
   const where = ["fecha=?"];
   const params = [String(fecha)];
-  if (s) { where.push("sector=?"); params.push(s); }
+  if (s) {
+    where.push("sector=?");
+    params.push(s);
+  }
   const whereSql = `WHERE ${where.join(" AND ")}`;
 
-  db.all(`SELECT * FROM arqueos ${whereSql} ORDER BY sector ASC, turno ASC`, params, (err, arqueos) => {
-    if (err) return res.status(500).json({ ok: false, error: "DB error" });
-    const ids = (arqueos || []).map((a) => a.id);
-    if (!ids.length) return res.json({ ok: true, arqueos: [], asignaciones: [] });
+  db.all(
+    `SELECT * FROM arqueos ${whereSql} ORDER BY sector ASC, turno ASC`,
+    params,
+    (err, arqueos) => {
+      if (err) return res.status(500).json({ ok: false, error: "DB error" });
+      const ids = (arqueos || []).map((a) => a.id);
+      if (!ids.length)
+        return res.json({ ok: true, arqueos: [], asignaciones: [] });
 
-    db.all(
-      `SELECT * FROM arqueo_asignaciones WHERE arqueo_id IN (${ids.map(() => "?").join(",")}) ORDER BY arqueo_id, legajo`,
-      ids,
-      (err2, asigs) => {
-        if (err2) return res.status(500).json({ ok: false, error: "DB error" });
-        res.json({ ok: true, arqueos: arqueos || [], asignaciones: asigs || [] });
-      }
-    );
-  });
+      db.all(
+        `SELECT * FROM arqueo_asignaciones WHERE arqueo_id IN (${ids.map(() => "?").join(",")}) ORDER BY arqueo_id, legajo`,
+        ids,
+        (err2, asigs) => {
+          if (err2)
+            return res.status(500).json({ ok: false, error: "DB error" });
+          res.json({
+            ok: true,
+            arqueos: arqueos || [],
+            asignaciones: asigs || [],
+          });
+        },
+      );
+    },
+  );
 });
 
 /* ===============================
@@ -1560,7 +1892,13 @@ app.get("/api/feriados/trabajados", (req, res) => {
 
   db.all(sql, [rng.start, rng.end], (err, rows) => {
     if (err) return res.status(500).json({ ok: false, error: "DB error" });
-    res.json({ ok: true, mes, desde: rng.start, hasta: rng.end, items: rows || [] });
+    res.json({
+      ok: true,
+      mes,
+      desde: rng.start,
+      hasta: rng.end,
+      items: rows || [],
+    });
   });
 });
 
@@ -1568,144 +1906,198 @@ app.get("/api/feriados/trabajados", (req, res) => {
    DASHBOARD (HOME)
    Endpoint liviano para la pantalla inicial.
 ================================ */
-app.get('/api/dashboard', (req, res) => {
-  // Dashboard "operativo" para el inicio: estado de asistencias, arqueos y alertas.
-  // Mantiene compatibilidad con campos antiguos (ultimos_arqueos/ultimas_asistencias/ultimas_novedades).
+app.get("/api/dashboard", async (req, res) => {
+  console.log("[/api/dashboard] cwd:", process.cwd());
+  console.log("[/api/dashboard] __dirname:", __dirname);
+  db.get("SELECT COUNT(*) AS c FROM asistencias", (e, r) =>
+    console.log("[/api/dashboard] asistencias count", e, r),
+  );
+  db.get("SELECT COUNT(*) AS c FROM arqueos", (e, r) =>
+    console.log("[/api/dashboard] arqueos count", e, r),
+  );
 
-  // Fecha local AR (UTC-03). Evita corrimientos raros si el servidor corre en otra zona.
-  function isoDateAR(d) {
-    const ms = d.getTime() - (d.getTimezoneOffset() * 60000) + (3 * 60 * 60000);
-    return new Date(ms).toISOString().slice(0, 10);
-  }
+  try {
+    const now = new Date();
+    const pad2 = (n) => String(n).padStart(2, "0");
+    const ymd = (d) =>
+      `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 
-  const hoy = isoDateAR(new Date());
-  const ayer = isoDateAR(new Date(Date.now() - 24 * 60 * 60 * 1000));
+    // Mes corriente (local)
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const yesterday = new Date(today);
+    yesterday.setDate(today.getDate() - 1);
 
-  const qUltArq = `SELECT fecha, COUNT(*) AS cant FROM arqueos GROUP BY fecha ORDER BY fecha DESC LIMIT 1`;
-  const qUltAsi = `SELECT fecha_entrada AS fecha, COUNT(*) AS cant FROM asistencias GROUP BY fecha_entrada ORDER BY fecha_entrada DESC LIMIT 1`;
-  const qAyerAsi = `SELECT COUNT(*) AS cant FROM asistencias WHERE fecha_entrada = ?`;
-  const qPendJorn = `SELECT COUNT(*) AS cant FROM jornadas_abiertas`;
+    const mes_desde = ymd(monthStart);
+    const mes_hasta = ymd(today); // incluye hoy para "mes corriente" (faltantes se calculan hasta ayer)
 
-  // Arqueos esperados por día (regla fija)
-  const ESPERADOS = {
-    playa: ['mañana', 'tarde', 'noche'],
-    shop: ['mañana', 'tarde'],
-  };
-
-  function getArqueosEstadoPorFecha(fecha, cb) {
-    const q = `SELECT sector, turno FROM arqueos WHERE fecha = ?`;
-    db.all(q, [fecha], (err, rows) => {
-      if (err) return cb(err);
-
-      const have = { playa: new Set(), shop: new Set() };
-      for (const r of rows || []) {
-        const s = String(r.sector || '').toLowerCase();
-        const t = String(r.turno || '').toLowerCase();
-        if (have[s]) have[s].add(t);
+    // Helpers de DB (por si alguna consulta falla, no rompemos el dashboard)
+    const safeAll = async (sql, params = []) => {
+      try {
+        return await dbAll(sql, params);
+      } catch (e) {
+        console.error(
+          "[dashboard] SQL all error:",
+          e.message,
+          "\nSQL:",
+          sql,
+          "\nPARAMS:",
+          params,
+        );
+        return [];
       }
-
-      const resu = {};
-      for (const [sec, turnos] of Object.entries(ESPERADOS)) {
-        const cargados = have[sec] ? Array.from(have[sec]) : [];
-        const faltan = turnos.filter((t) => !have[sec] || !have[sec].has(t));
-        resu[sec] = {
-          esperados: turnos.length,
-          cargados: cargados.length,
-          faltan,
-        };
+    };
+    const safeGet = async (sql, params = []) => {
+      try {
+        return await dbGet(sql, params);
+      } catch (e) {
+        console.error(
+          "[dashboard] SQL get error:",
+          e.message,
+          "\nSQL:",
+          sql,
+          "\nPARAMS:",
+          params,
+        );
+        return null;
       }
-      cb(null, resu);
+    };
+
+    // === Últimos movimientos (3) ===
+    // Asistencias: agrupado por día (fecha_entrada)
+    const ultAsis = await safeAll(`
+  SELECT substr(trim(fecha_entrada),1,10) as fecha, COUNT(*) as registros
+  FROM asistencias
+  WHERE trim(fecha_entrada) <> ''
+  GROUP BY substr(trim(fecha_entrada),1,10)
+  ORDER BY substr(trim(fecha_entrada),1,10) DESC
+  LIMIT 3
+`);
+
+    // Arqueos: agrupado por fecha
+    const ultArq = await safeAll(`
+  SELECT trim(fecha) as fecha, COUNT(*) as total_turnos,
+    SUM(CASE WHEN UPPER(trim(sector))='PLAYA' THEN 1 ELSE 0 END) as playa_cnt,
+    SUM(CASE WHEN UPPER(trim(sector))='SHOP' THEN 1 ELSE 0 END) as shop_cnt
+  FROM arqueos
+  WHERE trim(fecha) <> ''
+  GROUP BY trim(fecha)
+  ORDER BY trim(fecha) DESC
+  LIMIT 3
+`);
+
+    // Jornadas abiertas (conteo)
+    const openJ = await safeGet(`
+  SELECT COUNT(*) as c
+  FROM jornadas_abiertas
+`);
+    const jornadas_abiertas = openJ ? openJ.c || 0 : 0;
+
+    // === Faltantes del mes corriente ===
+    // Definición práctica: días desde inicio de mes hasta AYER (inclusive) que no tengan registros
+    const faltantes = { asistencias: [], arqueos: [] };
+
+    const asisDaysRows = await safeAll(
+      `
+  SELECT DISTINCT substr(trim(fecha_entrada),1,10) as d
+  FROM asistencias
+  WHERE substr(trim(fecha_entrada),1,10) BETWEEN ? AND ?
+`,
+      [mes_desde, ymd(yesterday)],
+    );
+
+    const asisSet = new Set((asisDaysRows || []).map((r) => r.d));
+
+    const arqDaysRows = await safeAll(
+      `
+      SELECT DISTINCT fecha as d
+      FROM arqueos
+      WHERE fecha BETWEEN ? AND ?
+    `,
+      [mes_desde, ymd(yesterday)],
+    );
+    const arqSet = new Set((arqDaysRows || []).map((r) => r.d));
+
+    // Iterar días
+    for (
+      let d = new Date(monthStart);
+      d <= yesterday;
+      d.setDate(d.getDate() + 1)
+    ) {
+      const ds = ymd(d);
+      if (!asisSet.has(ds)) faltantes.asistencias.push(ds);
+      if (!arqSet.has(ds)) faltantes.arqueos.push(ds);
+    }
+
+    // === Estado por sectores del último arqueo (para mantener el formato original de la card) ===
+    // Tomamos el último del array ultArq, pero ya viene DESC, entonces [0] es el más reciente
+    const ultimoArq = ultArq && ultArq[0] ? ultArq[0] : null;
+    let estadoArq = null;
+    if (ultimoArq) {
+      // Estado simple: PLAYA x/y y SHOP x/y, en base a turnos esperados "por día" (si existen)
+      // Como no tenemos una tabla de esperados acá, usamos el conteo real por sector como estado.
+      estadoArq = `Playa ${ultimoArq.playa_cnt || 0} | Shop ${ultimoArq.shop_cnt || 0}`;
+    }
+
+    const alertas = [];
+    if (faltantes.asistencias.length) {
+      alertas.push(
+        `Falta cargar asistencias: ${faltantes.asistencias.join(", ")}.`,
+      );
+    }
+    if (faltantes.arqueos.length) {
+      alertas.push(`Falta cargar arqueos: ${faltantes.arqueos.join(", ")}.`);
+    }
+    if (jornadas_abiertas > 0) {
+      alertas.push(
+        `Tenés ${jornadas_abiertas} jornada(s) abierta(s) pendiente(s).`,
+      );
+    }
+
+    // Payload compatible con el front (y tolerante a versiones viejas de dashboard-home.js)
+    // - El front viejo espera campos: .cant (no .registros / .total_turnos)
+    // - Espera jornadas_abiertas como objeto { pendientes }
+    // - Espera alertas como [{ mensaje }]
+    const ultimos_asistencias = (ultAsis || []).map((r) => ({
+      fecha: r.fecha,
+      registros: r.registros || 0,
+      cant: r.registros || 0,
+    }));
+
+    const ultimos_arqueos = (ultArq || []).map((r) => ({
+      fecha: r.fecha,
+      total_turnos: r.total_turnos || 0,
+      cant: r.total_turnos || 0,
+      estado: r === ultimoArq ? estadoArq || "" : "",
+    }));
+
+    const alertas_obj = (alertas || []).map((m) => ({
+      mensaje: String(m || ""),
+    }));
+
+    res.json({
+      ok: true,
+      ultimos_arqueos,
+      ultimos_asistencias,
+      // compat extra (algunos front viejos leían ultimas_*)
+      ultimas_asistencias: ultimos_asistencias,
+      ultimos_movimientos: {
+        asistencias: ultimos_asistencias,
+        arqueos: ultimos_arqueos,
+      },
+
+      jornadas_abiertas: { pendientes: jornadas_abiertas },
+      jornadas_abiertas_total: jornadas_abiertas,
+
+      faltantes_mes: faltantes,
+      alertas: alertas_obj,
     });
+  } catch (e) {
+    console.error("api/dashboard error", e);
+    res
+      .status(500)
+      .json({ ok: false, error: String(e && e.message ? e.message : e) });
   }
-
-  db.get(qUltArq, (e1, r1) => {
-    if (e1) return res.status(500).json({ ok: false, error: 'DB arqueos' });
-    db.get(qUltAsi, (e2, r2) => {
-      if (e2) return res.status(500).json({ ok: false, error: 'DB asistencias' });
-
-      db.get(qAyerAsi, [ayer], (e3, r3) => {
-        if (e3) return res.status(500).json({ ok: false, error: 'DB asistencias ayer' });
-        db.get(qPendJorn, (e4, r4) => {
-          if (e4) return res.status(500).json({ ok: false, error: 'DB jornadas abiertas' });
-
-          const ultArqStr = r1 ? `${r1.fecha} (${r1.cant} turnos)` : '—';
-          const ultAsiStr = r2 ? `${r2.fecha} (${r2.cant} registros)` : '—';
-
-          const asist = {
-            ultima_fecha: r2 ? r2.fecha : null,
-            ultima_cant: r2 ? r2.cant : 0,
-            ayer_fecha: ayer,
-            ayer_cant: r3 ? r3.cant : 0,
-            ayer_cargado: (r3 ? r3.cant : 0) > 0,
-          };
-
-          const jornadas = { pendientes: r4 ? r4.cant : 0 };
-
-          const fechaArq = r1 ? r1.fecha : null;
-          const fechaChequeoArq = fechaArq || ayer;
-
-          getArqueosEstadoPorFecha(fechaChequeoArq, (e5, estadoArq) => {
-            if (e5) return res.status(500).json({ ok: false, error: 'DB arqueos estado' });
-
-            const arqueos = {
-              ultima_fecha: fechaArq,
-              // estado del ultimo dia de arqueos (si no hay, se calcula sobre ayer)
-              estado: estadoArq,
-              fecha_estado: fechaChequeoArq,
-            };
-
-            // Novedades: si existe la tabla, contamos el mes actual
-            const now = new Date();
-            const yyyy = now.getFullYear();
-            const mm = String(now.getMonth() + 1).padStart(2, '0');
-            const mes = `${yyyy}-${mm}`;
-            const rng = monthRange(mes);
-
-            const qChk = `SELECT name FROM sqlite_master WHERE type='table' AND name='novedades'`;
-            db.get(qChk, (e6, t) => {
-              const base = {
-                ok: true,
-                hoy,
-                ayer,
-                ultimos_arqueos: ultArqStr,
-                ultimas_asistencias: ultAsiStr,
-                ultimas_novedades: '—',
-                asistencias: asist,
-                arqueos,
-                jornadas_abiertas: jornadas,
-                alertas: [],
-              };
-
-              // alertas
-              if (!asist.ayer_cargado) {
-                base.alertas.push({ tipo: 'asistencias', mensaje: `Falta cargar asistencias de ${ayer}.` });
-              }
-              if (jornadas.pendientes > 0) {
-                base.alertas.push({ tipo: 'jornadas', mensaje: `Tenés ${jornadas.pendientes} jornada(s) abierta(s) pendiente(s).` });
-              }
-              for (const sec of Object.keys(ESPERADOS)) {
-                const st = (estadoArq && estadoArq[sec]) ? estadoArq[sec] : { esperados: ESPERADOS[sec].length, cargados: 0, faltan: ESPERADOS[sec] };
-                if (st.faltan && st.faltan.length) {
-                  base.alertas.push({ tipo: 'arqueos', mensaje: `Arqueos incompletos (${sec}) en ${fechaChequeoArq}: faltan ${st.faltan.join(', ')}.` });
-                }
-              }
-
-              if (e6 || !t) return res.json(base);
-
-              const qNov = `SELECT COUNT(*) AS cant FROM novedades WHERE fecha BETWEEN ? AND ?`;
-              db.get(qNov, [rng.start, rng.end], (e7, r7) => {
-                if (e7) return res.json(base);
-                const cant = r7 ? r7.cant : 0;
-                base.ultimas_novedades = `${cant} este mes`;
-                base.novedades = { mes, cant };
-                return res.json(base);
-              });
-            });
-          });
-        });
-      });
-    });
-  });
 });
 
 app.post("/api/arqueos/guardar-y-calcular", (req, res) => {
@@ -1715,7 +2107,9 @@ app.post("/api/arqueos/guardar-y-calcular", (req, res) => {
   }
 
   const turnosValidos = turnosPorSector(sector);
-  const turnosIn = turnos.filter((t) => turnosValidos.includes(String(t.turno || "").toLowerCase()));
+  const turnosIn = turnos.filter((t) =>
+    turnosValidos.includes(String(t.turno || "").toLowerCase()),
+  );
 
   // 1) upsert arqueos
   const guardados = [];
@@ -1726,15 +2120,21 @@ app.post("/api/arqueos/guardar-y-calcular", (req, res) => {
     if (!it) {
       // 2) calcular participaciones con asistencias del día
       return getAsistenciasParaFecha(db, fecha, (e2, asistencias) => {
-        if (e2) return res.status(500).json({ ok: false, error: "DB asistencias" });
+        if (e2)
+          return res.status(500).json({ ok: false, error: "DB asistencias" });
 
         const propuestas = [];
         for (const arq of guardados) {
-          const parts = calcParticipaciones({ fecha, sector: arq.sector, turno: arq.turno }, asistencias);
+          const parts = calcParticipaciones(
+            { fecha, sector: arq.sector, turno: arq.turno },
+            asistencias,
+          );
           const totalMins = parts.reduce((acc, p) => acc + p.minutos, 0) || 0;
           for (const p of parts) {
             const prop = totalMins > 0 ? p.minutos / totalMins : 0;
-            const montoPropuesto = Number((Number(arq.monto_diferencia || 0) * prop).toFixed(2));
+            const montoPropuesto = Number(
+              (Number(arq.monto_diferencia || 0) * prop).toFixed(2),
+            );
             propuestas.push({
               arqueo_id: arq.id,
               fecha: arq.fecha,
@@ -1763,10 +2163,11 @@ app.post("/api/arqueos/guardar-y-calcular", (req, res) => {
         observaciones: it.observaciones,
       },
       (err, row) => {
-        if (err) return res.status(500).json({ ok: false, error: "DB arqueos" });
+        if (err)
+          return res.status(500).json({ ok: false, error: "DB arqueos" });
         guardados.push(row);
         nextUpsert();
-      }
+      },
     );
   }
 
@@ -1788,7 +2189,7 @@ app.post("/api/arqueos/confirmar", (req, res) => {
       INSERT INTO arqueo_asignaciones
       (arqueo_id, legajo, nombre, puesto, minutos, monto_propuesto, monto_final)
       VALUES (?,?,?,?,?,?,?)
-      `
+      `,
     );
 
     let count = 0;
@@ -1818,7 +2219,9 @@ app.post("/api/arqueos/confirmar", (req, res) => {
    LIQUIDACIÓN - HELPERS
 ================================ */
 function ymdToDate(ymd) {
-  const [y, m, d] = String(ymd || '').split('-').map(Number);
+  const [y, m, d] = String(ymd || "")
+    .split("-")
+    .map(Number);
   if (!y || !m || !d) return null;
   return new Date(y, m - 1, d);
 }
@@ -1842,24 +2245,45 @@ function clampInt(v, def = 0) {
 
 function defaultCfgForSector(sector) {
   const g = sectorGroup(sector);
-  if (g === 'shop') {
-    return { manana_start: 6 * 60, manana_end: 14 * 60, tarde_start: 14 * 60, tarde_end: 22 * 60, noche_start: null, noche_end: null };
+  if (g === "shop") {
+    return {
+      manana_start: 6 * 60,
+      manana_end: 14 * 60,
+      tarde_start: 14 * 60,
+      tarde_end: 22 * 60,
+      noche_start: null,
+      noche_end: null,
+    };
   }
   // Playa y fallback
-  return { manana_start: 5 * 60, manana_end: 13 * 60, tarde_start: 13 * 60, tarde_end: 21 * 60, noche_start: 21 * 60, noche_end: 29 * 60 };
+  return {
+    manana_start: 5 * 60,
+    manana_end: 13 * 60,
+    tarde_start: 13 * 60,
+    tarde_end: 21 * 60,
+    noche_start: 21 * 60,
+    noche_end: 29 * 60,
+  };
 }
 
 // Algunos puestos siguen horario "Shop" aunque estén en sector PLAYA (p.ej. Auxiliar de playa = como Cajero/a).
 function defaultCfgForPuesto(puesto, sector) {
-  const p = String(puesto || '').toLowerCase();
-  const esShopPorPuesto = p.includes('cajer') || p.includes('cajera') || p.includes('auxiliar de playa');
-  if (esShopPorPuesto) return defaultCfgForSector('shop');
+  const p = String(puesto || "").toLowerCase();
+  const esShopPorPuesto =
+    p.includes("cajer") ||
+    p.includes("cajera") ||
+    p.includes("auxiliar de playa");
+  if (esShopPorPuesto) return defaultCfgForSector("shop");
   return defaultCfgForSector(sector);
 }
 
 function esPuestoShopSchedule(puesto) {
-  const p = String(puesto || '').toLowerCase();
-  return p.includes('cajer') || p.includes('cajera') || p.includes('auxiliar de playa');
+  const p = String(puesto || "").toLowerCase();
+  return (
+    p.includes("cajer") ||
+    p.includes("cajera") ||
+    p.includes("auxiliar de playa")
+  );
 }
 
 function assignTurnoPorVentana({ sector, entrada, salida, cfg }) {
@@ -1892,7 +2316,8 @@ function assignTurnoPorVentana({ sector, entrada, salida, cfg }) {
 
 function turnoStartMin(sector, turno, cfg) {
   const g = sectorGroup(sector);
-  const w = (cfg ? turnoWindowByCfg(cfg, turno) : null) || turnoWindow(g, turno);
+  const w =
+    (cfg ? turnoWindowByCfg(cfg, turno) : null) || turnoWindow(g, turno);
   return w.start;
 }
 
@@ -1901,20 +2326,21 @@ function turnoStartMin(sector, turno, cfg) {
 ================================ */
 
 // (1) Recalcular tardanzas automáticas del mes (pero respetar overrides)
-app.post('/api/liquidacion/tardanzas/recalcular', (req, res) => {
+app.post("/api/liquidacion/tardanzas/recalcular", (req, res) => {
   const { mes } = req.body || {};
   const r = monthRange(mes);
-  if (!r) return res.status(400).json({ ok: false, error: 'Mes inválido (YYYY-MM)' });
+  if (!r)
+    return res.status(400).json({ ok: false, error: "Mes inválido (YYYY-MM)" });
 
   // Candidatos de inicio de turno (minutos desde 00:00) para inferir horarios por puesto
   // cuando no hay configuración explícita en puesto_horarios.
   const SHIFT_START_CANDIDATES = [
-    5 * 60,  // 05:00 (Playa mañana)
-    6 * 60,  // 06:00 (Shop mañana)
+    5 * 60, // 05:00 (Playa mañana)
+    6 * 60, // 06:00 (Shop mañana)
     13 * 60, // 13:00 (Playa tarde)
     14 * 60, // 14:00 (Shop tarde)
     21 * 60, // 21:00 (Playa noche)
-    22 * 60  // 22:00 (Shop tarde si se extiende / referencia)
+    22 * 60, // 22:00 (Shop tarde si se extiende / referencia)
   ];
 
   const nearestCandidate = (min, candidates) => {
@@ -1923,28 +2349,34 @@ app.post('/api/liquidacion/tardanzas/recalcular', (req, res) => {
     let bestD = Math.abs(min - best);
     for (const c of candidates) {
       const d = Math.abs(min - c);
-      if (d < bestD) { best = c; bestD = d; }
+      if (d < bestD) {
+        best = c;
+        bestD = d;
+      }
     }
     return best;
   };
 
   const median = (arr) => {
-    const a = (arr || []).slice().filter(v => typeof v === 'number' && !Number.isNaN(v)).sort((x,y)=>x-y);
+    const a = (arr || [])
+      .slice()
+      .filter((v) => typeof v === "number" && !Number.isNaN(v))
+      .sort((x, y) => x - y);
     if (!a.length) return null;
     const mid = Math.floor(a.length / 2);
-    return a.length % 2 ? a[mid] : Math.round((a[mid-1] + a[mid]) / 2);
+    return a.length % 2 ? a[mid] : Math.round((a[mid - 1] + a[mid]) / 2);
   };
 
   // Inferir cfg de un puesto mirando las entradas reales del mes (evita asumir 05:00 para todos los puestos de playa)
   const inferCfgForPuesto = (puesto, rowsForPuesto) => {
     const entries = (rowsForPuesto || [])
-      .map(r => hhmmToMin(r.entrada))
-      .filter(v => v != null);
+      .map((r) => hhmmToMin(r.entrada))
+      .filter((v) => v != null);
 
     // Split aproximado por franjas horarias
-    const morning = entries.filter(m => m >= 3*60 && m <= 10*60);
-    const afternoon = entries.filter(m => m >= 11*60 && m <= 18*60);
-    const evening = entries.filter(m => m >= 18*60 && m <= 23*60);
+    const morning = entries.filter((m) => m >= 3 * 60 && m <= 10 * 60);
+    const afternoon = entries.filter((m) => m >= 11 * 60 && m <= 18 * 60);
+    const evening = entries.filter((m) => m >= 18 * 60 && m <= 23 * 60);
 
     const mMed = median(morning);
     const tMed = median(afternoon);
@@ -1954,12 +2386,15 @@ app.post('/api/liquidacion/tardanzas/recalcular', (req, res) => {
     if (mMed == null && tMed == null && nMed == null) return null;
 
     // Tomamos el candidato más cercano (05/06, 13/14, 21/22)
-    const mananaStart = mMed != null ? nearestCandidate(mMed, [5*60, 6*60]) : null;
-    const tardeStart = tMed != null ? nearestCandidate(tMed, [13*60, 14*60]) : null;
-    const nocheStart = nMed != null ? nearestCandidate(nMed, [21*60, 22*60]) : null;
+    const mananaStart =
+      mMed != null ? nearestCandidate(mMed, [5 * 60, 6 * 60]) : null;
+    const tardeStart =
+      tMed != null ? nearestCandidate(tMed, [13 * 60, 14 * 60]) : null;
+    const nocheStart =
+      nMed != null ? nearestCandidate(nMed, [21 * 60, 22 * 60]) : null;
 
     // End estimado: +8hs (o ventanas estándar si es nocturno y cruza medianoche)
-    const makeEnd = (start) => (start == null ? null : start + 8*60);
+    const makeEnd = (start) => (start == null ? null : start + 8 * 60);
     const cfg = {
       manana_start: mananaStart,
       manana_end: makeEnd(mananaStart),
@@ -1967,7 +2402,7 @@ app.post('/api/liquidacion/tardanzas/recalcular', (req, res) => {
       tarde_end: makeEnd(tardeStart),
       noche_start: nocheStart,
       // Si el inicio es 21/22, el fin sería 29/30 (cruza medianoche)
-      noche_end: nocheStart == null ? null : (nocheStart + 8*60)
+      noche_end: nocheStart == null ? null : nocheStart + 8 * 60,
     };
     return cfg;
   };
@@ -1978,218 +2413,289 @@ app.post('/api/liquidacion/tardanzas/recalcular', (req, res) => {
      WHERE fecha_entrada BETWEEN ? AND ?`,
     [r.start, r.end],
     (err, rows) => {
-      if (err) return res.status(500).json({ ok: false, error: 'DB asistencias' });
+      if (err)
+        return res.status(500).json({ ok: false, error: "DB asistencias" });
 
       // Cargar configuración de horarios por PUESTO (si existe). Si no existe, se usa el default por sector.
-      const puestos = Array.from(new Set((rows || []).map(r => String(r.puesto || '').trim()).filter(Boolean)));
+      const puestos = Array.from(
+        new Set(
+          (rows || [])
+            .map((r) => String(r.puesto || "").trim())
+            .filter(Boolean),
+        ),
+      );
       const cfgMap = new Map(); // puesto -> cfg
 
-      const seedMissing = (missing) => new Promise((resolve) => {
-        if (!missing.length) return resolve();
-        const ins = db.prepare(
-          `INSERT OR IGNORE INTO puesto_horarios (puesto, manana_start, manana_end, tarde_start, tarde_end, noche_start, noche_end)
-           VALUES (?,?,?,?,?,?,?)`
-        );
-        for (const m of missing) {
-          // Primero intentamos inferir horarios por puesto mirando las entradas reales del mes.
-          // Esto evita asumir 05:00 para todos los puestos de "Playa".
-          const rowsP = (rows || []).filter(rr => String(rr.puesto || '').trim() === m);
-          const inf = inferCfgForPuesto(m, rowsP);
+      const seedMissing = (missing) =>
+        new Promise((resolve) => {
+          if (!missing.length) return resolve();
+          const ins = db.prepare(
+            `INSERT OR IGNORE INTO puesto_horarios (puesto, manana_start, manana_end, tarde_start, tarde_end, noche_start, noche_end)
+           VALUES (?,?,?,?,?,?,?)`,
+          );
+          for (const m of missing) {
+            // Primero intentamos inferir horarios por puesto mirando las entradas reales del mes.
+            // Esto evita asumir 05:00 para todos los puestos de "Playa".
+            const rowsP = (rows || []).filter(
+              (rr) => String(rr.puesto || "").trim() === m,
+            );
+            const inf = inferCfgForPuesto(m, rowsP);
 
-          // Fallback: si no se puede inferir (pocos datos), usamos el default por sector.
-          const row = rowsP[0] || (rows || []).find(rr => String(rr.puesto || '').trim() === m);
-          const def = defaultCfgForPuesto(m, row?.sector);
+            // Fallback: si no se puede inferir (pocos datos), usamos el default por sector.
+            const row =
+              rowsP[0] ||
+              (rows || []).find((rr) => String(rr.puesto || "").trim() === m);
+            const def = defaultCfgForPuesto(m, row?.sector);
 
-          const cfg = inf || def;
-          ins.run([m, cfg.manana_start, cfg.manana_end, cfg.tarde_start, cfg.tarde_end, cfg.noche_start, cfg.noche_end]);
-        }
-        ins.finalize(() => resolve());
-      });
+            const cfg = inf || def;
+            ins.run([
+              m,
+              cfg.manana_start,
+              cfg.manana_end,
+              cfg.tarde_start,
+              cfg.tarde_end,
+              cfg.noche_start,
+              cfg.noche_end,
+            ]);
+          }
+          ins.finalize(() => resolve());
+        });
 
-      const loadCfg = () => new Promise((resolve) => {
-        if (!puestos.length) return resolve();
-        const placeholders = puestos.map(() => '?').join(',');
-        db.all(
-          `SELECT puesto, manana_start, manana_end, tarde_start, tarde_end, noche_start, noche_end
+      const loadCfg = () =>
+        new Promise((resolve) => {
+          if (!puestos.length) return resolve();
+          const placeholders = puestos.map(() => "?").join(",");
+          db.all(
+            `SELECT puesto, manana_start, manana_end, tarde_start, tarde_end, noche_start, noche_end
            FROM puesto_horarios
            WHERE puesto IN (${placeholders})`,
-          puestos,
-          (e2, rows2) => {
-            if (!e2) {
-              for (const c of rows2 || []) cfgMap.set(String(c.puesto).trim(), c);
-            }
-            resolve();
-          }
-        );
-      });
+            puestos,
+            (e2, rows2) => {
+              if (!e2) {
+                for (const c of rows2 || [])
+                  cfgMap.set(String(c.puesto).trim(), c);
+              }
+              resolve();
+            },
+          );
+        });
 
-      const missing = puestos.filter(p => !cfgMap.has(p));
+      const missing = puestos.filter((p) => !cfgMap.has(p));
       // Cargamos configs existentes, seed para los faltantes y recargamos
       return loadCfg()
         .then(() => {
-          const missing2 = puestos.filter(p => !cfgMap.has(p));
+          const missing2 = puestos.filter((p) => !cfgMap.has(p));
           return seedMissing(missing2);
         })
         .then(() => loadCfg())
         .then(() => {
+          // Si el puesto ya estaba sembrado con defaults por sector (auto-seed) pero los datos del mes
+          // muestran otro horario típico, actualizamos automáticamente para evitar tardanzas falsas.
+          // No tocamos configuraciones que ya difieran del default (asumimos que ahí hubo ajuste manual).
+          const updPromises = puestos.map(
+            (p) =>
+              new Promise((resolve) => {
+                const current = cfgMap.get(p);
+                const rowsP = (rows || []).filter(
+                  (rr) => String(rr.puesto || "").trim() === p,
+                );
+                const sectorRef = rowsP[0]?.sector;
+                const def = defaultCfgForPuesto(p, sectorRef);
+                const inf = inferCfgForPuesto(p, rowsP);
 
-      // Si el puesto ya estaba sembrado con defaults por sector (auto-seed) pero los datos del mes
-      // muestran otro horario típico, actualizamos automáticamente para evitar tardanzas falsas.
-      // No tocamos configuraciones que ya difieran del default (asumimos que ahí hubo ajuste manual).
-      const updPromises = puestos.map((p) => new Promise((resolve) => {
-        const current = cfgMap.get(p);
-        const rowsP = (rows || []).filter(rr => String(rr.puesto || '').trim() === p);
-        const sectorRef = rowsP[0]?.sector;
-        const def = defaultCfgForPuesto(p, sectorRef);
-        const inf = inferCfgForPuesto(p, rowsP);
+                // Regla fija por negocio: ciertos puestos siguen SIEMPRE horario tipo "Shop"
+                // aunque estén en sector PLAYA (p.ej. "Auxiliar de playa" = 06-14 / 14-22).
+                const pLower = String(p || "").toLowerCase();
+                const esShopPorPuesto =
+                  pLower.includes("auxiliar de playa") ||
+                  pLower.includes("cajer") ||
+                  pLower.includes("cajera");
+                if (esShopPorPuesto && current) {
+                  const shopDef = defaultCfgForSector("shop");
+                  const yaEsShop =
+                    current.manana_start === shopDef.manana_start &&
+                    current.manana_end === shopDef.manana_end &&
+                    current.tarde_start === shopDef.tarde_start &&
+                    current.tarde_end === shopDef.tarde_end &&
+                    (current.noche_start ?? null) ===
+                      (shopDef.noche_start ?? null) &&
+                    (current.noche_end ?? null) === (shopDef.noche_end ?? null);
 
-        // Regla fija por negocio: ciertos puestos siguen SIEMPRE horario tipo "Shop"
-        // aunque estén en sector PLAYA (p.ej. "Auxiliar de playa" = 06-14 / 14-22).
-        const pLower = String(p || '').toLowerCase();
-        const esShopPorPuesto = pLower.includes('auxiliar de playa') || pLower.includes('cajer') || pLower.includes('cajera');
-        if (esShopPorPuesto && current) {
-          const shopDef = defaultCfgForSector('shop');
-          const yaEsShop =
-            current.manana_start === shopDef.manana_start && current.manana_end === shopDef.manana_end &&
-            current.tarde_start === shopDef.tarde_start && current.tarde_end === shopDef.tarde_end &&
-            (current.noche_start ?? null) === (shopDef.noche_start ?? null) &&
-            (current.noche_end ?? null) === (shopDef.noche_end ?? null);
-
-          if (!yaEsShop) {
-            return db.run(
-              `UPDATE puesto_horarios
+                  if (!yaEsShop) {
+                    return db.run(
+                      `UPDATE puesto_horarios
                SET manana_start=?, manana_end=?, tarde_start=?, tarde_end=?, noche_start=?, noche_end=?
                WHERE puesto=?`,
-              [shopDef.manana_start, shopDef.manana_end, shopDef.tarde_start, shopDef.tarde_end, shopDef.noche_start, shopDef.noche_end, p],
-              () => {
-                cfgMap.set(p, { puesto: p, ...shopDef });
-                return resolve();
-              }
-            );
-          }
-        }
+                      [
+                        shopDef.manana_start,
+                        shopDef.manana_end,
+                        shopDef.tarde_start,
+                        shopDef.tarde_end,
+                        shopDef.noche_start,
+                        shopDef.noche_end,
+                        p,
+                      ],
+                      () => {
+                        cfgMap.set(p, { puesto: p, ...shopDef });
+                        return resolve();
+                      },
+                    );
+                  }
+                }
 
-        const isDefault = current && def &&
-          current.manana_start === def.manana_start && current.manana_end === def.manana_end &&
-          current.tarde_start === def.tarde_start && current.tarde_end === def.tarde_end &&
-          current.noche_start === def.noche_start && current.noche_end === def.noche_end;
+                const isDefault =
+                  current &&
+                  def &&
+                  current.manana_start === def.manana_start &&
+                  current.manana_end === def.manana_end &&
+                  current.tarde_start === def.tarde_start &&
+                  current.tarde_end === def.tarde_end &&
+                  current.noche_start === def.noche_start &&
+                  current.noche_end === def.noche_end;
 
-        const differsFromInf = current && inf && (
-          current.manana_start !== inf.manana_start || current.tarde_start !== inf.tarde_start || current.noche_start !== inf.noche_start
-        );
+                const differsFromInf =
+                  current &&
+                  inf &&
+                  (current.manana_start !== inf.manana_start ||
+                    current.tarde_start !== inf.tarde_start ||
+                    current.noche_start !== inf.noche_start);
 
-        if (!isDefault || !inf || !differsFromInf) return resolve();
+                if (!isDefault || !inf || !differsFromInf) return resolve();
 
-        db.run(
-          `UPDATE puesto_horarios
+                db.run(
+                  `UPDATE puesto_horarios
            SET manana_start=?, manana_end=?, tarde_start=?, tarde_end=?, noche_start=?, noche_end=?
            WHERE puesto=?`,
-          [inf.manana_start, inf.manana_end, inf.tarde_start, inf.tarde_end, inf.noche_start, inf.noche_end, p],
-          () => {
-            // refrescamos el map in-memory
-            cfgMap.set(p, { puesto: p, ...inf });
-            resolve();
-          }
-        );
-      }));
+                  [
+                    inf.manana_start,
+                    inf.manana_end,
+                    inf.tarde_start,
+                    inf.tarde_end,
+                    inf.noche_start,
+                    inf.noche_end,
+                    p,
+                  ],
+                  () => {
+                    // refrescamos el map in-memory
+                    cfgMap.set(p, { puesto: p, ...inf });
+                    resolve();
+                  },
+                );
+              }),
+          );
 
-      return Promise.all(updPromises).then(() => {
+          return Promise.all(updPromises).then(() => {
+            // Importante: una persona puede tener varias asistencias el mismo día (p. ej. doble fichada).
+            // Para tardanza SOLO tomamos la PRIMERA entrada del día (la más temprana) y calculamos sobre esa.
+            // Si usamos la más tarde, puede marcar tardanza falsa (por ejemplo regreso de almuerzo).
+            const calc = new Map(); // key: legajo|fecha -> { entAdjMin, late, entradaStr, inicioStr, turno }
+            for (const a of rows || []) {
+              const leg = normLegajo(a.legajo);
+              const fecha = String(a.fecha_entrada || "");
+              if (!leg || !fecha) continue;
 
-      // Importante: una persona puede tener varias asistencias el mismo día (p. ej. doble fichada).
-      // Para tardanza SOLO tomamos la PRIMERA entrada del día (la más temprana) y calculamos sobre esa.
-      // Si usamos la más tarde, puede marcar tardanza falsa (por ejemplo regreso de almuerzo).
-      const calc = new Map(); // key: legajo|fecha -> { entAdjMin, late, entradaStr, inicioStr, turno }
-      for (const a of rows || []) {
-        const leg = normLegajo(a.legajo);
-        const fecha = String(a.fecha_entrada || '');
-        if (!leg || !fecha) continue;
+              const puesto = String(a.puesto || "").trim();
+              const cfg = cfgMap.get(puesto) || null;
+              const turno = assignTurnoPorVentana({
+                sector: a.sector,
+                entrada: a.entrada,
+                salida: a.salida,
+                cfg,
+              });
+              if (!turno) continue;
 
-        const puesto = String(a.puesto || '').trim();
-        const cfg = cfgMap.get(puesto) || null;
-        const turno = assignTurnoPorVentana({ sector: a.sector, entrada: a.entrada, salida: a.salida, cfg });
-        if (!turno) continue;
+              const start = turnoStartMin(a.sector, turno, cfg);
+              const ent = hhmmToMin(a.entrada);
+              if (ent == null) continue;
 
-        const start = turnoStartMin(a.sector, turno, cfg);
-        const ent = hhmmToMin(a.entrada);
-        if (ent == null) continue;
+              // Ajuste de madrugada SOLO para turno noche (21:00-05:00).
+              // Para turnos de día, si alguien entra antes, NO debe convertirse en "1426 min tarde".
+              let entAdj = ent;
+              if (
+                turno === "noche" &&
+                start >= 21 * 60 &&
+                start > entAdj &&
+                entAdj <= 360
+              )
+                entAdj += 1440;
 
-        // Ajuste de madrugada SOLO para turno noche (21:00-05:00).
-        // Para turnos de día, si alguien entra antes, NO debe convertirse en "1426 min tarde".
-        let entAdj = ent;
-        if (turno === 'noche' && start >= 21 * 60 && start > entAdj && entAdj <= 360) entAdj += 1440;
+              const late = Math.max(0, entAdj - start);
+              const key = `${leg}|${fecha}`;
+              const prev = calc.get(key);
+              if (!prev || entAdj < prev.entAdjMin) {
+                calc.set(key, {
+                  entAdjMin: entAdj,
+                  late,
+                  entradaStr: String(a.entrada || ""),
+                  inicioStr: minToHHMM(start),
+                  turno,
+                });
+              }
+            }
 
-        const late = Math.max(0, entAdj - start);
-        const key = `${leg}|${fecha}`;
-        const prev = calc.get(key);
-        if (!prev || entAdj < prev.entAdjMin) {
-          calc.set(key, {
-            entAdjMin: entAdj,
-            late,
-            entradaStr: String(a.entrada || ''),
-            inicioStr: minToHHMM(start),
-            turno
-          });
-        }
-      }
-
-      const stmt = db.prepare(
-        `INSERT INTO tardanzas (legajo, fecha, minutos_auto, turno, entrada_tomada, inicio_turno)
+            const stmt = db.prepare(
+              `INSERT INTO tardanzas (legajo, fecha, minutos_auto, turno, entrada_tomada, inicio_turno)
          VALUES (?,?,?,?,?,?)
          ON CONFLICT(legajo, fecha) DO UPDATE SET
            minutos_auto=excluded.minutos_auto,
            turno=excluded.turno,
            entrada_tomada=excluded.entrada_tomada,
-           inicio_turno=excluded.inicio_turno`
-      );
-      let count = 0;
-      for (const [key, obj] of calc.entries()) {
-        const [legajo, fecha] = key.split('|');
-        const mins = obj?.late ?? 0;
-        stmt.run([
-          legajo,
-          fecha,
-          clampInt(mins, 0),
-          String(obj?.turno || ''),
-          String(obj?.entradaStr || ''),
-          String(obj?.inicioStr || '')
-        ]);
-        count++;
-      }
-      stmt.finalize(() => res.json({ ok: true, recalculadas: count }));
-      });
+           inicio_turno=excluded.inicio_turno`,
+            );
+            let count = 0;
+            for (const [key, obj] of calc.entries()) {
+              const [legajo, fecha] = key.split("|");
+              const mins = obj?.late ?? 0;
+              stmt.run([
+                legajo,
+                fecha,
+                clampInt(mins, 0),
+                String(obj?.turno || ""),
+                String(obj?.entradaStr || ""),
+                String(obj?.inicioStr || ""),
+              ]);
+              count++;
+            }
+            stmt.finalize(() => res.json({ ok: true, recalculadas: count }));
+          });
         });
-    }
+    },
   );
 });
 
 // (2) Guardar override (editable)
-app.post('/api/liquidacion/tardanzas/override', (req, res) => {
+app.post("/api/liquidacion/tardanzas/override", (req, res) => {
   const { legajo, fecha, minutos_final, motivo } = req.body || {};
   const leg = normLegajo(legajo);
-  const f = String(fecha || '').trim();
+  const f = String(fecha || "").trim();
   if (!leg || !/^\d{4}-\d{2}-\d{2}$/.test(f)) {
-    return res.status(400).json({ ok: false, error: 'Datos inválidos' });
+    return res.status(400).json({ ok: false, error: "Datos inválidos" });
   }
-  const mins = minutos_final === null || minutos_final === undefined || minutos_final === ''
-    ? null
-    : clampInt(minutos_final, 0);
+  const mins =
+    minutos_final === null ||
+    minutos_final === undefined ||
+    minutos_final === ""
+      ? null
+      : clampInt(minutos_final, 0);
   db.run(
     `INSERT INTO tardanzas (legajo, fecha, minutos_auto, minutos_final, motivo_override)
      VALUES (?,?,0,?,?)
      ON CONFLICT(legajo, fecha) DO UPDATE SET minutos_final=excluded.minutos_final, motivo_override=excluded.motivo_override`,
-    [leg, f, mins, String(motivo || '')],
+    [leg, f, mins, String(motivo || "")],
     (err) => {
-      if (err) return res.status(500).json({ ok: false, error: 'DB tardanzas' });
+      if (err)
+        return res.status(500).json({ ok: false, error: "DB tardanzas" });
       res.json({ ok: true });
-    }
+    },
   );
 });
 
 // (2b) Listado tardanzas del mes (auto + final)
-app.get('/api/liquidacion/tardanzas', (req, res) => {
-  const mes = String(req.query.mes || '').trim();
+app.get("/api/liquidacion/tardanzas", (req, res) => {
+  const mes = String(req.query.mes || "").trim();
   const r = monthRange(mes);
-  if (!r) return res.status(400).json({ ok: false, error: 'Mes inválido (YYYY-MM)' });
+  if (!r)
+    return res.status(400).json({ ok: false, error: "Mes inválido (YYYY-MM)" });
   db.all(
     `SELECT t.legajo, e.nombre, e.puesto, t.fecha,
             t.turno, t.entrada_tomada, t.inicio_turno,
@@ -2200,34 +2706,44 @@ app.get('/api/liquidacion/tardanzas', (req, res) => {
      ORDER BY t.fecha, t.legajo`,
     [r.start, r.end],
     (err, rows) => {
-      if (err) return res.status(500).json({ ok: false, error: 'DB tardanzas' });
+      if (err)
+        return res.status(500).json({ ok: false, error: "DB tardanzas" });
       res.json({ ok: true, mes, rango: r, items: rows || [] });
-    }
+    },
   );
 });
 
 // (3) CRUD escalas (upsert simple)
-app.post('/api/liquidacion/escalas/upsert', (req, res) => {
-  const { mes, categoria, basico, premio_asistencia, premio_manejo_fondos } = req.body || {};
-  const m = String(mes || '').trim();
-  const c = String(categoria || '').trim();
-  if (!/^\d{4}-\d{2}$/.test(m) || !c) return res.status(400).json({ ok: false, error: 'Datos inválidos' });
+app.post("/api/liquidacion/escalas/upsert", (req, res) => {
+  const { mes, categoria, basico, premio_asistencia, premio_manejo_fondos } =
+    req.body || {};
+  const m = String(mes || "").trim();
+  const c = String(categoria || "").trim();
+  if (!/^\d{4}-\d{2}$/.test(m) || !c)
+    return res.status(400).json({ ok: false, error: "Datos inválidos" });
   db.run(
     `INSERT INTO escalas (mes, categoria, basico, premio_asistencia, premio_manejo_fondos)
      VALUES (?,?,?,?,?)
      ON CONFLICT(mes, categoria) DO UPDATE SET basico=excluded.basico, premio_asistencia=excluded.premio_asistencia, premio_manejo_fondos=excluded.premio_manejo_fondos`,
-    [m, c, Number(basico || 0), Number(premio_asistencia || 0), Number(premio_manejo_fondos || 0)],
+    [
+      m,
+      c,
+      Number(basico || 0),
+      Number(premio_asistencia || 0),
+      Number(premio_manejo_fondos || 0),
+    ],
     (err) => {
-      if (err) return res.status(500).json({ ok: false, error: 'DB escalas' });
+      if (err) return res.status(500).json({ ok: false, error: "DB escalas" });
       res.json({ ok: true });
-    }
+    },
   );
 });
 
 // (3b) Listar escalas del mes
-app.get('/api/liquidacion/escalas', (req, res) => {
-  const mes = String(req.query.mes || '').trim();
-  if (!/^\d{4}-\d{2}$/.test(mes)) return res.status(400).json({ ok: false, error: 'Mes inválido (YYYY-MM)' });
+app.get("/api/liquidacion/escalas", (req, res) => {
+  const mes = String(req.query.mes || "").trim();
+  if (!/^\d{4}-\d{2}$/.test(mes))
+    return res.status(400).json({ ok: false, error: "Mes inválido (YYYY-MM)" });
   db.all(
     `SELECT mes, categoria, basico, premio_asistencia, premio_manejo_fondos
      FROM escalas
@@ -2235,44 +2751,59 @@ app.get('/api/liquidacion/escalas', (req, res) => {
      ORDER BY categoria`,
     [mes],
     (err, rows) => {
-      if (err) return res.status(500).json({ ok: false, error: 'DB escalas' });
+      if (err) return res.status(500).json({ ok: false, error: "DB escalas" });
       res.json({ ok: true, mes, items: rows || [] });
-    }
+    },
   );
 });
 
 // (3b) Preparado: conteo desde calendario (francos / días programados) sin romper liquidación actual
 // Devuelve counts por legajo para el mes consultado.
 // Útil para futuras decisiones: sumar a días trabajados o solo informativo.
-app.get('/api/liquidacion/calendario', async (req, res) => {
-  const mes = String(req.query.mes || '').trim();
+app.get("/api/liquidacion/calendario", async (req, res) => {
+  const mes = String(req.query.mes || "").trim();
   const r = monthRange(mes);
-  if (!r) return res.status(400).json({ ok: false, error: 'Mes inválido (YYYY-MM)' });
+  if (!r)
+    return res.status(400).json({ ok: false, error: "Mes inválido (YYYY-MM)" });
 
   try {
-    const emps = await allSql('SELECT legajo, nombre, sector, puesto FROM empleados WHERE activo=1');
-    const asigns = await allSql('SELECT * FROM calendario_empleado_patron');
-    const asignMap = new Map((asigns || []).map(a => [normLegajo(a.legajo), a]));
-    const patronIds = Array.from(new Set((asigns || []).map(a => Number(a.patron_id)).filter(Boolean)));
+    const emps = await allSql(
+      "SELECT legajo, nombre, sector, puesto FROM empleados WHERE activo=1",
+    );
+    const asigns = await allSql("SELECT * FROM calendario_empleado_patron");
+    const asignMap = new Map(
+      (asigns || []).map((a) => [normLegajo(a.legajo), a]),
+    );
+    const patronIds = Array.from(
+      new Set((asigns || []).map((a) => Number(a.patron_id)).filter(Boolean)),
+    );
 
     const patronMap = new Map();
     const detByPatron = new Map();
     for (const pid of patronIds) {
-      const p = (await allSql('SELECT * FROM calendario_patrones WHERE id=?', [pid]))[0];
+      const p = (
+        await allSql("SELECT * FROM calendario_patrones WHERE id=?", [pid])
+      )[0];
       if (!p) continue;
       patronMap.set(pid, p);
-      const det = await allSql('SELECT * FROM calendario_patron_detalle WHERE patron_id=?', [pid]);
-      detByPatron.set(pid, new Map((det || []).map(d => [Number(d.dia_idx), d])));
+      const det = await allSql(
+        "SELECT * FROM calendario_patron_detalle WHERE patron_id=?",
+        [pid],
+      );
+      detByPatron.set(
+        pid,
+        new Map((det || []).map((d) => [Number(d.dia_idx), d])),
+      );
     }
 
     const exRows = await allSql(
-      'SELECT * FROM calendario_excepciones WHERE fecha BETWEEN ? AND ?',
-      [r.start, r.end]
+      "SELECT * FROM calendario_excepciones WHERE fecha BETWEEN ? AND ?",
+      [r.start, r.end],
     );
     const exMap = new Map(); // leg|fecha -> ex
     for (const ex of exRows || []) {
       const leg = normLegajo(ex.legajo);
-      const f = String(ex.fecha || '');
+      const f = String(ex.fecha || "");
       if (!leg || !f) continue;
       exMap.set(`${leg}|${f}`, ex);
     }
@@ -2288,14 +2819,19 @@ app.get('/api/liquidacion/calendario', async (req, res) => {
       let cur = r.start;
       while (cur <= r.end) {
         const ex = exMap.get(`${leg}|${cur}`);
-        let turno = '';
+        let turno = "";
 
         if (ex) {
-          turno = ex.turno_override ? String(ex.turno_override).toUpperCase() : '';
+          turno = ex.turno_override
+            ? String(ex.turno_override).toUpperCase()
+            : "";
           if (!turno) {
-            const tipo = String(ex.tipo || '').toUpperCase();
-            if (['VACACIONES', 'LICENCIA', 'PERMISO', 'ENFERMEDAD'].includes(tipo)) turno = 'AUSENCIA';
-            if (tipo === 'FRANCO_EXTRA') turno = 'FRANCO';
+            const tipo = String(ex.tipo || "").toUpperCase();
+            if (
+              ["VACACIONES", "LICENCIA", "PERMISO", "ENFERMEDAD"].includes(tipo)
+            )
+              turno = "AUSENCIA";
+            if (tipo === "FRANCO_EXTRA") turno = "FRANCO";
           }
         } else {
           const as = asignMap.get(leg);
@@ -2305,225 +2841,333 @@ app.get('/api/liquidacion/calendario', async (req, res) => {
             const detMap = detByPatron.get(pid) || new Map();
             if (patron) {
               const diff = daysBetween(as.fecha_inicio, cur);
-              const idx = ((diff % patron.ciclo_dias) + patron.ciclo_dias) % patron.ciclo_dias;
+              const idx =
+                ((diff % patron.ciclo_dias) + patron.ciclo_dias) %
+                patron.ciclo_dias;
               const d = detMap.get(idx);
-              turno = d ? String(d.turno).toUpperCase() : 'FRANCO';
+              turno = d ? String(d.turno).toUpperCase() : "FRANCO";
             }
           }
         }
 
-        const t = String(turno || '').toUpperCase();
-        if (t === 'FRANCO') francos++;
-        if (['MANIANA', 'TARDE', 'NOCHE'].includes(t)) programados++;
+        const t = String(turno || "").toUpperCase();
+        if (t === "FRANCO") francos++;
+        if (["MANIANA", "TARDE", "NOCHE"].includes(t)) programados++;
 
         cur = addDays(cur, 1);
       }
 
-      out.push({ legajo: leg, nombre: e.nombre || '', francos_calendario: francos, dias_programados_calendario: programados });
+      out.push({
+        legajo: leg,
+        nombre: e.nombre || "",
+        francos_calendario: francos,
+        dias_programados_calendario: programados,
+      });
     }
 
-    out.sort((a, b) => String(a.nombre || '').localeCompare(String(b.nombre || '')));
+    out.sort((a, b) =>
+      String(a.nombre || "").localeCompare(String(b.nombre || "")),
+    );
     res.json({ ok: true, mes, rango: r, items: out });
   } catch (e) {
     console.error(e);
-    res.status(500).json({ ok: false, error: 'Error contando calendario' });
+    res.status(500).json({ ok: false, error: "Error contando calendario" });
   }
 });
 
 // (4) Resumen de liquidación
-app.get('/api/liquidacion', (req, res) => {
-  const mes = String(req.query.mes || '').trim();
+app.get("/api/liquidacion", (req, res) => {
+  const mes = String(req.query.mes || "").trim();
   const r = monthRange(mes);
-  if (!r) return res.status(400).json({ ok: false, error: 'Mes inválido (YYYY-MM)' });
+  if (!r)
+    return res.status(400).json({ ok: false, error: "Mes inválido (YYYY-MM)" });
 
   // Pre-carga para acelerar: feriados del rango
-  db.all(`SELECT fecha FROM feriados WHERE fecha BETWEEN ? AND ?`, [r.start, r.end], (errF, ferRows) => {
-    if (errF) return res.status(500).json({ ok: false, error: 'DB feriados' });
-    const setFeriados = new Set((ferRows || []).map((x) => x.fecha));
+  db.all(
+    `SELECT fecha FROM feriados WHERE fecha BETWEEN ? AND ?`,
+    [r.start, r.end],
+    (errF, ferRows) => {
+      if (errF)
+        return res.status(500).json({ ok: false, error: "DB feriados" });
+      const setFeriados = new Set((ferRows || []).map((x) => x.fecha));
 
-    // Asistencias del mes
-    db.all(
-      `SELECT legajo, nombre, sector, puesto, fecha_entrada, entrada, salida
+      // Asistencias del mes
+      db.all(
+        `SELECT legajo, nombre, sector, puesto, fecha_entrada, entrada, salida
        FROM asistencias
        WHERE fecha_entrada BETWEEN ? AND ?`,
-      [r.start, r.end],
-      (errA, asis) => {
-        if (errA) return res.status(500).json({ ok: false, error: 'DB asistencias' });
+        [r.start, r.end],
+        (errA, asis) => {
+          if (errA)
+            return res.status(500).json({ ok: false, error: "DB asistencias" });
 
-        // Empleados activos
-        db.all(`SELECT legajo, nombre, sector, puesto, categoria, fecha_ingreso, activo FROM empleados WHERE activo=1`, [], (errE, emps) => {
-          if (errE) return res.status(500).json({ ok: false, error: 'DB empleados' });
-
-          const mapEmp = new Map();
-          for (const e of emps || []) {
-            const leg = normLegajo(e.legajo);
-            if (!leg) continue;
-            mapEmp.set(leg, e);
-          }
-
-          // Index asistencias por legajo
-          const byLeg = new Map();
-          for (const a of asis || []) {
-            const leg = normLegajo(a.legajo);
-            if (!leg) continue;
-            if (!byLeg.has(leg)) byLeg.set(leg, []);
-            byLeg.get(leg).push(a);
-          }
-
-          // Tardanzas efectivas del mes
+          // Empleados activos
           db.all(
-            `SELECT legajo, fecha, minutos_auto, minutos_final
-             FROM tardanzas
-             WHERE fecha BETWEEN ? AND ?`,
-            [r.start, r.end],
-            (errT, tRows) => {
-              if (errT) return res.status(500).json({ ok: false, error: 'DB tardanzas' });
-              const tMap = new Map(); // leg|fecha -> effective
-              for (const t of tRows || []) {
-                const leg = normLegajo(t.legajo);
-                const f = String(t.fecha || '');
-                const eff = (t.minutos_final === null || t.minutos_final === undefined) ? Number(t.minutos_auto || 0) : Number(t.minutos_final || 0);
-                tMap.set(`${leg}|${f}`, clampInt(eff, 0));
+            `SELECT legajo, nombre, sector, puesto, categoria, fecha_ingreso, activo FROM empleados WHERE activo=1`,
+            [],
+            (errE, emps) => {
+              if (errE)
+                return res
+                  .status(500)
+                  .json({ ok: false, error: "DB empleados" });
+
+              const mapEmp = new Map();
+              for (const e of emps || []) {
+                const leg = normLegajo(e.legajo);
+                if (!leg) continue;
+                mapEmp.set(leg, e);
               }
 
-              // Escalas del mes
-              db.all(`SELECT * FROM escalas WHERE mes=?`, [mes], (errS, sRows) => {
-                if (errS) return res.status(500).json({ ok: false, error: 'DB escalas' });
-                const sMap = new Map(); // categoria -> row
-                for (const s of sRows || []) sMap.set(String(s.categoria || '').trim(), s);
+              // Index asistencias por legajo
+              const byLeg = new Map();
+              for (const a of asis || []) {
+                const leg = normLegajo(a.legajo);
+                if (!leg) continue;
+                if (!byLeg.has(leg)) byLeg.set(leg, []);
+                byLeg.get(leg).push(a);
+              }
 
-                // Arqueos imputados por empleado (solo faltantes)
-                db.all(
-                  `SELECT aa.legajo, aa.monto_final, a.fecha
+              // Tardanzas efectivas del mes
+              db.all(
+                `SELECT legajo, fecha, minutos_auto, minutos_final
+             FROM tardanzas
+             WHERE fecha BETWEEN ? AND ?`,
+                [r.start, r.end],
+                (errT, tRows) => {
+                  if (errT)
+                    return res
+                      .status(500)
+                      .json({ ok: false, error: "DB tardanzas" });
+                  const tMap = new Map(); // leg|fecha -> effective
+                  for (const t of tRows || []) {
+                    const leg = normLegajo(t.legajo);
+                    const f = String(t.fecha || "");
+                    const eff =
+                      t.minutos_final === null || t.minutos_final === undefined
+                        ? Number(t.minutos_auto || 0)
+                        : Number(t.minutos_final || 0);
+                    tMap.set(`${leg}|${f}`, clampInt(eff, 0));
+                  }
+
+                  // Escalas del mes
+                  db.all(
+                    `SELECT * FROM escalas WHERE mes=?`,
+                    [mes],
+                    (errS, sRows) => {
+                      if (errS)
+                        return res
+                          .status(500)
+                          .json({ ok: false, error: "DB escalas" });
+                      const sMap = new Map(); // categoria -> row
+                      for (const s of sRows || [])
+                        sMap.set(String(s.categoria || "").trim(), s);
+
+                      // Arqueos imputados por empleado (solo faltantes)
+                      db.all(
+                        `SELECT aa.legajo, aa.monto_final, a.fecha
                    FROM arqueo_asignaciones aa
                    JOIN arqueos a ON a.id = aa.arqueo_id
                    WHERE a.fecha BETWEEN ? AND ?`,
-                  [r.start, r.end],
-                  (errArq, arqRows) => {
-                    if (errArq) return res.status(500).json({ ok: false, error: 'DB arqueos' });
-                    const faltantes = new Map(); // legajo -> sumAbsNeg
-                    for (const row of arqRows || []) {
-                      const leg = normLegajo(row.legajo);
-                      const mf = Number(row.monto_final || 0);
-                      if (!leg) continue;
-                      if (mf < 0) {
-                        const prev = faltantes.get(leg) || 0;
-                        faltantes.set(leg, prev + Math.abs(mf));
-                      }
-                    }
+                        [r.start, r.end],
+                        (errArq, arqRows) => {
+                          if (errArq)
+                            return res
+                              .status(500)
+                              .json({ ok: false, error: "DB arqueos" });
+                          const faltantes = new Map(); // legajo -> sumAbsNeg
+                          for (const row of arqRows || []) {
+                            const leg = normLegajo(row.legajo);
+                            const mf = Number(row.monto_final || 0);
+                            if (!leg) continue;
+                            if (mf < 0) {
+                              const prev = faltantes.get(leg) || 0;
+                              faltantes.set(leg, prev + Math.abs(mf));
+                            }
+                          }
 
-                    // Adelantos del mes
-                    db.all(
-                      `SELECT legajo, SUM(monto) as total
+                          // Adelantos del mes
+                          db.all(
+                            `SELECT legajo, SUM(monto) as total
                        FROM adelantos
                        WHERE fecha BETWEEN ? AND ?
                        GROUP BY legajo`,
-                      [r.start, r.end],
-                      (errAd, adRows) => {
-                        if (errAd) return res.status(500).json({ ok: false, error: 'DB adelantos' });
-                        const adMap = new Map();
-                        for (const a of adRows || []) adMap.set(normLegajo(a.legajo), Number(a.total || 0));
+                            [r.start, r.end],
+                            async (errAd, adRows) => {
+                              if (errAd)
+                                return res
+                                  .status(500)
+                                  .json({ ok: false, error: "DB adelantos" });
+                              const adMap = new Map();
+                              for (const a of adRows || [])
+                                adMap.set(
+                                  normLegajo(a.legajo),
+                                  Number(a.total || 0),
+                                );
 
-                        const TOL = 10;
-                        const NOCT_PCT = 0.25;
+                              const TOL = 10;
+                              const NOCT_PCT = 0.25;
 
-                        const out = [];
-                        for (const [leg, emp] of mapEmp.entries()) {
-                          const rows = byLeg.get(leg) || [];
+                              const out = [];
+                              for (const [leg, emp] of mapEmp.entries()) {
+                                const rows = byLeg.get(leg) || [];
 
-                          // Días trabajados (únicos)
-                          const diasSet = new Set(rows.map((x) => String(x.fecha_entrada || '')));
-                          diasSet.delete('');
-                          const diasTrab = diasSet.size;
+                                // Días trabajados (únicos)
+                                // Regla negocio:
+                                // - FRANCO siempre cuenta como día trabajado
+                                // - CAMBIO/Reemplazo (excepción) también cuenta como trabajado
+                                //   aunque no exista fichada.
+                                const diasSet = new Set(
+                                  rows.map((x) =>
+                                    String(x.fecha_entrada || ""),
+                                  ),
+                                );
+                                diasSet.delete("");
 
-                          // Noches por turno (únicos por fecha)
-                          const nochesSet = new Set();
-                          for (const a of rows) {
-                            const turno = assignTurnoPorVentana({ sector: a.sector, entrada: a.entrada, salida: a.salida });
-                            if (String(turno).toLowerCase() === 'noche') nochesSet.add(String(a.fecha_entrada));
-                          }
-                          nochesSet.delete('');
-                          const nochesTurnos = nochesSet.size;
+                                try {
+                                  const exRows = await allSql(
+                                    `SELECT fecha
+                               FROM calendario_excepciones
+                               WHERE legajo = ?
+                                 AND fecha BETWEEN ? AND ?
+                                 AND UPPER(tipo) IN ('FRANCO','FRANCO_EXTRA','CAMBIO')`,
+                                    [leg, r.start, r.end],
+                                  );
+                                  for (const ex of exRows || []) {
+                                    const f = String(ex.fecha || "").slice(
+                                      0,
+                                      10,
+                                    );
+                                    if (f) diasSet.add(f);
+                                  }
+                                } catch (e) {
+                                  // si algo falla, no rompemos la liquidación
+                                }
 
-                          // Feriados trabajados (únicos por fecha)
-                          const ferSet = new Set();
-                          for (const a of rows) {
-                            const f = String(a.fecha_entrada || '');
-                            if (setFeriados.has(f)) ferSet.add(f);
-                          }
-                          const feriadosTrab = ferSet.size;
+                                const diasTrab = diasSet.size;
 
-                          // Tardanzas: contar días con tardanza efectiva > tolerancia
-                          const tardSet = new Set();
-                          for (const d of diasSet) {
-                            const mins = tMap.get(`${leg}|${d}`);
-                            if (mins != null && mins > TOL) tardSet.add(d);
-                          }
-                          const tardanzas = tardSet.size;
-                          const pierdePresentismo = tardanzas >= 3;
+                                // Noches por turno (únicos por fecha)
+                                const nochesSet = new Set();
+                                for (const a of rows) {
+                                  const turno = assignTurnoPorVentana({
+                                    sector: a.sector,
+                                    entrada: a.entrada,
+                                    salida: a.salida,
+                                  });
+                                  if (String(turno).toLowerCase() === "noche")
+                                    nochesSet.add(String(a.fecha_entrada));
+                                }
+                                nochesSet.delete("");
+                                const nochesTurnos = nochesSet.size;
 
-                          // Escala salarial
-                          const cat = String(emp.categoria || '').trim();
-                          const esc = sMap.get(cat) || { basico: 0, premio_asistencia: 0, premio_manejo_fondos: 0 };
-                          const basico = Number(esc.basico || 0);
+                                // Feriados trabajados (únicos por fecha)
+                                const ferSet = new Set();
+                                for (const a of rows) {
+                                  const f = String(a.fecha_entrada || "");
+                                  if (setFeriados.has(f)) ferSet.add(f);
+                                }
+                                const feriadosTrab = ferSet.size;
 
-                          // Antigüedad
-                          const anios = diffAniosCompletos(emp.fecha_ingreso, r.end);
-                          const montoAnt = basico * 0.02 * anios;
-                          const valorHora = (basico + montoAnt) / 200;
+                                // Tardanzas: contar días con tardanza efectiva > tolerancia
+                                const tardSet = new Set();
+                                for (const d of diasSet) {
+                                  const mins = tMap.get(`${leg}|${d}`);
+                                  if (mins != null && mins > TOL)
+                                    tardSet.add(d);
+                                }
+                                const tardanzas = tardSet.size;
+                                const pierdePresentismo = tardanzas >= 3;
 
-                          // Nocturnidad por turnos (8h)
-                          const horasNoct = nochesTurnos * 8;
-                          const adicionalNoct = valorHora * horasNoct * NOCT_PCT;
+                                // Escala salarial
+                                const cat = String(emp.categoria || "").trim();
+                                const esc = sMap.get(cat) || {
+                                  basico: 0,
+                                  premio_asistencia: 0,
+                                  premio_manejo_fondos: 0,
+                                };
+                                const basico = Number(esc.basico || 0);
 
-                          // Premios
-                          const premioAsis = pierdePresentismo ? 0 : Number(esc.premio_asistencia || 0);
-                          const falt = Number(faltantes.get(leg) || 0);
-                          const premioMfRaw = Number(esc.premio_manejo_fondos || 0);
-                          const premioMf = Math.max(0, premioMfRaw - falt);
+                                // Antigüedad
+                                const anios = diffAniosCompletos(
+                                  emp.fecha_ingreso,
+                                  r.end,
+                                );
+                                const montoAnt = basico * 0.02 * anios;
+                                const valorHora = (basico + montoAnt) / 200;
 
-                          // Adelantos
-                          const adelantos = Number(adMap.get(leg) || 0);
+                                // Nocturnidad por turnos (8h)
+                                const horasNoct = nochesTurnos * 8;
+                                const adicionalNoct =
+                                  valorHora * horasNoct * NOCT_PCT;
 
-                          out.push({
-                            legajo: leg,
-                            nombre: emp.nombre,
-                            sector: emp.sector,
-                            puesto: emp.puesto,
-                            categoria: cat,
-                            fecha_ingreso: emp.fecha_ingreso,
-                            dias_trabajados: diasTrab,
-                            noches_turnos: nochesTurnos,
-                            feriados_trabajados: feriadosTrab,
-                            tardanzas,
-                            pierde_presentismo: pierdePresentismo,
-                            basico,
-                            anios_antiguedad: anios,
-                            monto_antiguedad: Number(montoAnt.toFixed(2)),
-                            adicional_nocturnidad: Number(adicionalNoct.toFixed(2)),
-                            premio_asistencia: Number(premioAsis.toFixed(2)),
-                            premio_manejo_fondos_bruto: Number(premioMfRaw.toFixed(2)),
-                            ajuste_manejo_fondos: Number(falt.toFixed(2)),
-                            premio_manejo_fondos: Number(premioMf.toFixed(2)),
-                            adelantos: Number(adelantos.toFixed(2)),
-                          });
-                        }
+                                // Premios
+                                const premioAsis = pierdePresentismo
+                                  ? 0
+                                  : Number(esc.premio_asistencia || 0);
+                                const falt = Number(faltantes.get(leg) || 0);
+                                const premioMfRaw = Number(
+                                  esc.premio_manejo_fondos || 0,
+                                );
+                                const premioMf = Math.max(
+                                  0,
+                                  premioMfRaw - falt,
+                                );
 
-                        out.sort((a, b) => String(a.nombre || '').localeCompare(String(b.nombre || '')));
-                        res.json({ ok: true, mes, rango: r, items: out });
-                      }
-                    );
-                  }
-                );
-              });
-            }
+                                // Adelantos
+                                const adelantos = Number(adMap.get(leg) || 0);
+
+                                out.push({
+                                  legajo: leg,
+                                  nombre: emp.nombre,
+                                  sector: emp.sector,
+                                  puesto: emp.puesto,
+                                  categoria: cat,
+                                  fecha_ingreso: emp.fecha_ingreso,
+                                  dias_trabajados: diasTrab,
+                                  noches_turnos: nochesTurnos,
+                                  feriados_trabajados: feriadosTrab,
+                                  tardanzas,
+                                  pierde_presentismo: pierdePresentismo,
+                                  basico,
+                                  anios_antiguedad: anios,
+                                  monto_antiguedad: Number(montoAnt.toFixed(2)),
+                                  adicional_nocturnidad: Number(
+                                    adicionalNoct.toFixed(2),
+                                  ),
+                                  premio_asistencia: Number(
+                                    premioAsis.toFixed(2),
+                                  ),
+                                  premio_manejo_fondos_bruto: Number(
+                                    premioMfRaw.toFixed(2),
+                                  ),
+                                  ajuste_manejo_fondos: Number(falt.toFixed(2)),
+                                  premio_manejo_fondos: Number(
+                                    premioMf.toFixed(2),
+                                  ),
+                                  adelantos: Number(adelantos.toFixed(2)),
+                                });
+                              }
+
+                              out.sort((a, b) =>
+                                String(a.nombre || "").localeCompare(
+                                  String(b.nombre || ""),
+                                ),
+                              );
+                              res.json({ ok: true, mes, rango: r, items: out });
+                            },
+                          );
+                        },
+                      );
+                    },
+                  );
+                },
+              );
+            },
           );
-        });
-      }
-    );
-  });
+        },
+      );
+    },
+  );
 });
-
 
 /* ===============================
    START
@@ -2534,90 +3178,123 @@ app.get('/api/liquidacion', (req, res) => {
 ================================ */
 
 function daysBetween(a, b) {
-  const da = new Date(a + 'T00:00:00');
-  const dbb = new Date(b + 'T00:00:00');
+  const da = new Date(a + "T00:00:00");
+  const dbb = new Date(b + "T00:00:00");
   const ms = dbb - da;
   return Math.floor(ms / (24 * 3600 * 1000));
 }
 
 function addDays(dateStr, n) {
-  const d = new Date(dateStr + 'T00:00:00');
+  const d = new Date(dateStr + "T00:00:00");
   d.setDate(d.getDate() + n);
   return d.toISOString().slice(0, 10);
 }
 
 function turnoToHorario(puesto, turno) {
   return new Promise((resolve) => {
-    if (!puesto || !turno || turno === 'FRANCO') return resolve({ inicio: null, fin: null });
-    db.get('SELECT * FROM puesto_horarios WHERE puesto = ?', [puesto], (err, row) => {
-      if (err || !row) return resolve({ inicio: null, fin: null });
-      if (turno === 'MANIANA') return resolve({ inicio: row.manana_start ?? null, fin: row.manana_end ?? null });
-      if (turno === 'TARDE') return resolve({ inicio: row.tarde_start ?? null, fin: row.tarde_end ?? null });
-      if (turno === 'NOCHE') return resolve({ inicio: row.noche_start ?? null, fin: row.noche_end ?? null });
+    if (!puesto || !turno || turno === "FRANCO")
       return resolve({ inicio: null, fin: null });
-    });
+    db.get(
+      "SELECT * FROM puesto_horarios WHERE puesto = ?",
+      [puesto],
+      (err, row) => {
+        if (err || !row) return resolve({ inicio: null, fin: null });
+        if (turno === "MANIANA")
+          return resolve({
+            inicio: row.manana_start ?? null,
+            fin: row.manana_end ?? null,
+          });
+        if (turno === "TARDE")
+          return resolve({
+            inicio: row.tarde_start ?? null,
+            fin: row.tarde_end ?? null,
+          });
+        if (turno === "NOCHE")
+          return resolve({
+            inicio: row.noche_start ?? null,
+            fin: row.noche_end ?? null,
+          });
+        return resolve({ inicio: null, fin: null });
+      },
+    );
   });
 }
 
 // Patrones
-app.get('/api/patrones', (req, res) => {
-  db.all('SELECT * FROM calendario_patrones ORDER BY id DESC', (err, rows) => {
-    if (err) return res.status(500).json({ error: 'Error leyendo patrones' });
+app.get("/api/patrones", (req, res) => {
+  db.all("SELECT * FROM calendario_patrones ORDER BY id DESC", (err, rows) => {
+    if (err) return res.status(500).json({ error: "Error leyendo patrones" });
     res.json(rows || []);
   });
 });
 
 // Alias para compatibilidad con pantallas antiguas / integraciones
 // Devuelve { ok:true, patrones:[...] }
-app.get('/api/calendario/patrones', (req, res) => {
-  db.all('SELECT * FROM calendario_patrones ORDER BY id DESC', (err, rows) => {
-    if (err) return res.status(500).json({ ok: false, error: 'Error leyendo patrones' });
+app.get("/api/calendario/patrones", (req, res) => {
+  db.all("SELECT * FROM calendario_patrones ORDER BY id DESC", (err, rows) => {
+    if (err)
+      return res
+        .status(500)
+        .json({ ok: false, error: "Error leyendo patrones" });
     res.json({ ok: true, patrones: rows || [] });
   });
 });
 
-app.post('/api/patrones', (req, res) => {
+app.post("/api/patrones", (req, res) => {
   const { nombre, ciclo_dias, detalle } = req.body || {};
-  if (!nombre || !ciclo_dias) return res.status(400).json({ error: 'Faltan datos (nombre, ciclo_dias)' });
+  if (!nombre || !ciclo_dias)
+    return res.status(400).json({ error: "Faltan datos (nombre, ciclo_dias)" });
 
-  db.run('INSERT INTO calendario_patrones (nombre, ciclo_dias) VALUES (?, ?)', [nombre, Number(ciclo_dias)], function (err) {
-    if (err) return res.status(500).json({ error: 'Error creando patrón' });
-    const patron_id = this.lastID;
+  db.run(
+    "INSERT INTO calendario_patrones (nombre, ciclo_dias) VALUES (?, ?)",
+    [nombre, Number(ciclo_dias)],
+    function (err) {
+      if (err) return res.status(500).json({ error: "Error creando patrón" });
+      const patron_id = this.lastID;
 
-    if (Array.isArray(detalle) && detalle.length) {
-      const stmt = db.prepare('INSERT INTO calendario_patron_detalle (patron_id, dia_idx, turno, puesto) VALUES (?, ?, ?, ?)');
-      detalle.forEach((d) => {
-        stmt.run([patron_id, Number(d.dia_idx), String(d.turno || '').toUpperCase(), d.puesto || null]);
-      });
-      stmt.finalize(() => res.json({ ok: true, id: patron_id }));
-    } else {
-      db.run(
-        'INSERT INTO calendario_patron_detalle (patron_id, dia_idx, turno, puesto) VALUES (?, ?, ?, ?)',
-        [patron_id, 0, 'FRANCO', null],
-        () => res.json({ ok: true, id: patron_id })
-      );
-    }
-  });
+      if (Array.isArray(detalle) && detalle.length) {
+        const stmt = db.prepare(
+          "INSERT INTO calendario_patron_detalle (patron_id, dia_idx, turno, puesto) VALUES (?, ?, ?, ?)",
+        );
+        detalle.forEach((d) => {
+          stmt.run([
+            patron_id,
+            Number(d.dia_idx),
+            String(d.turno || "").toUpperCase(),
+            d.puesto || null,
+          ]);
+        });
+        stmt.finalize(() => res.json({ ok: true, id: patron_id }));
+      } else {
+        db.run(
+          "INSERT INTO calendario_patron_detalle (patron_id, dia_idx, turno, puesto) VALUES (?, ?, ?, ?)",
+          [patron_id, 0, "FRANCO", null],
+          () => res.json({ ok: true, id: patron_id }),
+        );
+      }
+    },
+  );
 });
 
 // Asignación patrón empleado
-app.get('/api/empleados/:legajo/patron', (req, res) => {
+app.get("/api/empleados/:legajo/patron", (req, res) => {
   const legajo = req.params.legajo;
   db.get(
-    'SELECT ep.legajo, ep.patron_id, ep.fecha_inicio, p.nombre as patron_nombre, p.ciclo_dias FROM calendario_empleado_patron ep JOIN calendario_patrones p ON p.id = ep.patron_id WHERE ep.legajo = ?',
+    "SELECT ep.legajo, ep.patron_id, ep.fecha_inicio, p.nombre as patron_nombre, p.ciclo_dias FROM calendario_empleado_patron ep JOIN calendario_patrones p ON p.id = ep.patron_id WHERE ep.legajo = ?",
     [legajo],
     (err, row) => {
-      if (err) return res.status(500).json({ error: 'Error leyendo asignación' });
+      if (err)
+        return res.status(500).json({ error: "Error leyendo asignación" });
       if (!row) return res.json({});
       res.json(row);
-    }
+    },
   );
 });
 
 // Patrón efectivo (override por empleado, o por puesto desde Configuración avanzada)
-app.get('/api/empleados/:legajo/patron-efectivo', (req, res) => {
+app.get("/api/empleados/:legajo/patron-efectivo", (req, res) => {
   const legajo = normLegajo(req.params.legajo);
-  if (!legajo) return res.status(400).json({ error: 'Legajo inválido' });
+  if (!legajo) return res.status(400).json({ error: "Legajo inválido" });
 
   // 1) Override por empleado
   db.get(
@@ -2627,112 +3304,328 @@ app.get('/api/empleados/:legajo/patron-efectivo', (req, res) => {
      WHERE ep.legajo = ?`,
     [legajo],
     (err, row) => {
-      if (err) return res.status(500).json({ error: 'Error leyendo patrón' });
+      if (err) return res.status(500).json({ error: "Error leyendo patrón" });
       if (row) return res.json(row);
 
       // 2) Por puesto (config avanzada)
-      db.get('SELECT puesto FROM empleados WHERE legajo=?', [legajo], (e2, emp) => {
-        if (e2) return res.status(500).json({ error: 'Error leyendo empleado' });
-        const puesto = String(emp?.puesto || '').trim();
-        if (!puesto) return res.json({});
+      db.get(
+        "SELECT puesto FROM empleados WHERE legajo=?",
+        [legajo],
+        (e2, emp) => {
+          if (e2)
+            return res.status(500).json({ error: "Error leyendo empleado" });
+          const puesto = String(emp?.puesto || "").trim();
+          if (!puesto) return res.json({});
 
-        db.get(
-          `SELECT ph.puesto, ph.patron_id, ph.patron_inicio as fecha_inicio, p.nombre as patron_nombre, 'PUESTO' as fuente
+          db.get(
+            `SELECT ph.puesto, ph.patron_id, ph.patron_inicio as fecha_inicio, p.nombre as patron_nombre, 'PUESTO' as fuente
            FROM puesto_horarios ph
            JOIN calendario_patrones p ON p.id = ph.patron_id
            WHERE UPPER(TRIM(ph.puesto)) = UPPER(TRIM(?)) AND ph.patron_id IS NOT NULL`,
-          [puesto],
-          (e3, r3) => {
-            if (e3) return res.status(500).json({ error: 'Error leyendo patrón por puesto' });
-            if (!r3) return res.json({});
-            res.json({
-              legajo,
-              patron_id: r3.patron_id,
-              fecha_inicio: r3.fecha_inicio,
-              patron_nombre: r3.patron_nombre,
-              fuente: 'PUESTO',
-              puesto: r3.puesto,
-            });
-          }
-        );
-      });
-    }
+            [puesto],
+            (e3, r3) => {
+              if (e3)
+                return res
+                  .status(500)
+                  .json({ error: "Error leyendo patrón por puesto" });
+              if (!r3) return res.json({});
+              res.json({
+                legajo,
+                patron_id: r3.patron_id,
+                fecha_inicio: r3.fecha_inicio,
+                patron_nombre: r3.patron_nombre,
+                fuente: "PUESTO",
+                puesto: r3.puesto,
+              });
+            },
+          );
+        },
+      );
+    },
   );
 });
 
-app.put('/api/empleados/:legajo/patron', (req, res) => {
+app.put("/api/empleados/:legajo/patron", (req, res) => {
   const legajo = req.params.legajo;
   const { patron_id, fecha_inicio } = req.body || {};
-  if (!patron_id || !fecha_inicio) return res.status(400).json({ error: 'Faltan datos (patron_id, fecha_inicio)' });
+  if (!patron_id || !fecha_inicio)
+    return res
+      .status(400)
+      .json({ error: "Faltan datos (patron_id, fecha_inicio)" });
 
-  db.get('SELECT id FROM calendario_patrones WHERE id = ?', [Number(patron_id)], (err, pRow) => {
-    if (err || !pRow) return res.status(400).json({ error: 'Patrón inexistente' });
-    db.run(
-      "INSERT INTO calendario_empleado_patron (legajo, patron_id, fecha_inicio) VALUES (?, ?, ?) ON CONFLICT(legajo) DO UPDATE SET patron_id=excluded.patron_id, fecha_inicio=excluded.fecha_inicio",
-      [legajo, Number(patron_id), fecha_inicio],
-      (err2) => {
-        if (err2) return res.status(500).json({ error: 'Error guardando asignación' });
-        res.json({ ok: true });
-      }
-    );
-  });
+  db.get(
+    "SELECT id FROM calendario_patrones WHERE id = ?",
+    [Number(patron_id)],
+    (err, pRow) => {
+      if (err || !pRow)
+        return res.status(400).json({ error: "Patrón inexistente" });
+      db.run(
+        "INSERT INTO calendario_empleado_patron (legajo, patron_id, fecha_inicio) VALUES (?, ?, ?) ON CONFLICT(legajo) DO UPDATE SET patron_id=excluded.patron_id, fecha_inicio=excluded.fecha_inicio",
+        [legajo, Number(patron_id), fecha_inicio],
+        (err2) => {
+          if (err2)
+            return res
+              .status(500)
+              .json({ error: "Error guardando asignación" });
+          res.json({ ok: true });
+        },
+      );
+    },
+  );
 });
 
 // Excepciones (upsert por legajo+fecha)
-app.post('/api/calendario/excepciones', (req, res) => {
-  const { legajo, fecha, tipo, puesto_override, turno_override, motivo } = req.body || {};
-  if (!legajo || !fecha || !tipo) return res.status(400).json({ error: 'Faltan datos (legajo, fecha, tipo)' });
+app.post("/api/calendario/excepciones", (req, res) => {
+  const { legajo, fecha, tipo, puesto_override, turno_override, motivo, ctx } =
+    req.body || {};
+  const sector_override = ctx && ctx.sector ? String(ctx.sector) : null;
+  if (!legajo || !fecha || !tipo)
+    return res
+      .status(400)
+      .json({ error: "Faltan datos (legajo, fecha, tipo)" });
 
-  db.get('SELECT id FROM calendario_excepciones WHERE legajo=? AND fecha=?', [legajo, fecha], (err, row) => {
-    if (err) return res.status(500).json({ error: 'Error leyendo excepción' });
+  db.get(
+    "SELECT id FROM calendario_excepciones WHERE legajo=? AND fecha=?",
+    [legajo, fecha],
+    (err, row) => {
+      if (err)
+        return res.status(500).json({ error: "Error leyendo excepción" });
 
-    const fields = [tipo, puesto_override || null, turno_override || null, motivo || null, legajo, fecha];
-    if (row?.id) {
-      db.run(
-        'UPDATE calendario_excepciones SET tipo=?, puesto_override=?, turno_override=?, motivo=? WHERE legajo=? AND fecha=?',
-        fields,
-        (err2) => {
-          if (err2) return res.status(500).json({ error: 'Error actualizando excepción' });
-          res.json({ ok: true, id: row.id });
-        }
-      );
-    } else {
-      db.run(
-        'INSERT INTO calendario_excepciones (tipo, puesto_override, turno_override, motivo, legajo, fecha) VALUES (?, ?, ?, ?, ?, ?)',
-        fields,
-        function (err2) {
-          if (err2) return res.status(500).json({ error: 'Error creando excepción' });
-          res.json({ ok: true, id: this.lastID });
-        }
-      );
-    }
+      const fields = [
+        tipo,
+        puesto_override || null,
+        turno_override || null,
+        sector_override || null,
+        motivo || null,
+        legajo,
+        fecha,
+      ];
+      if (row?.id) {
+        db.run(
+          "UPDATE calendario_excepciones SET tipo=?, puesto_override=?, turno_override=?, sector_override=?, motivo=? WHERE legajo=? AND fecha=?",
+          fields,
+          (err2) => {
+            if (err2)
+              return res
+                .status(500)
+                .json({ error: "Error actualizando excepción" });
+
+            // --- Avisos de cobertura para puestos críticos ---
+            try {
+              const CRITICOS = ["Cajero/a", "Playero/a"];
+              const AUSENCIA_TYPES = [
+                "ENFERMEDAD",
+                "LICENCIA",
+                "VACACIONES",
+                "PERMISO",
+              ];
+              const ctx = req.body && req.body.ctx ? req.body.ctx : {};
+              const sectorCtx = ctx.sector || null;
+              const puestoBase = ctx.puesto_base || null;
+              const turnoBase = ctx.turno_base || null;
+
+              // Si se marca ausencia en un puesto crítico, dejamos aviso pendiente (siempre se puede guardar).
+              if (
+                AUSENCIA_TYPES.includes(String(tipo).toUpperCase()) &&
+                puestoBase &&
+                turnoBase &&
+                sectorCtx &&
+                CRITICOS.includes(puestoBase)
+              ) {
+                db.run(
+                  `INSERT OR IGNORE INTO calendario_avisos_cobertura (fecha, sector, puesto, turno, legajo_ausente, tipo_ausencia)
+                 VALUES (?, ?, ?, ?, ?, ?)`,
+                  [
+                    fecha,
+                    sectorCtx,
+                    puestoBase,
+                    turnoBase,
+                    legajo,
+                    String(tipo).toUpperCase(),
+                  ],
+                  () => {},
+                );
+              }
+
+              // Si se crea un CAMBIO hacia un puesto crítico, intentamos resolver aviso pendiente de esa celda
+              const tipoUp = String(tipo).toUpperCase();
+              const targetPuesto = puesto_override || null;
+              const targetTurno = turno_override || null;
+              if (
+                tipoUp === "CAMBIO" &&
+                targetPuesto &&
+                targetTurno &&
+                sectorCtx &&
+                CRITICOS.includes(targetPuesto)
+              ) {
+                db.run(
+                  `UPDATE calendario_avisos_cobertura
+                 SET estado='RESUELTO', legajo_reemplazo=?, resolved_at=datetime('now')
+                 WHERE fecha=? AND sector=? AND puesto=? AND turno=? AND estado='PENDIENTE'`,
+                  [legajo, fecha, sectorCtx, targetPuesto, targetTurno],
+                  () => {},
+                );
+              }
+            } catch (e) {}
+
+            res.json({ ok: true, id: row.id, aviso: true });
+          },
+        );
+      } else {
+        db.run(
+          "INSERT INTO calendario_excepciones (tipo, puesto_override, turno_override, sector_override, motivo, legajo, fecha) VALUES (?, ?, ?, ?, ?, ?, ?)",
+          fields,
+          function (err2) {
+            if (err2)
+              return res.status(500).json({ error: "Error creando excepción" });
+
+            // --- Avisos de cobertura para puestos críticos ---
+            try {
+              const CRITICOS = ["Cajero/a", "Playero/a"];
+              const AUSENCIA_TYPES = [
+                "ENFERMEDAD",
+                "LICENCIA",
+                "VACACIONES",
+                "PERMISO",
+              ];
+              const ctx = req.body && req.body.ctx ? req.body.ctx : {};
+              const sectorCtx = ctx.sector || null;
+              const puestoBase = ctx.puesto_base || null;
+              const turnoBase = ctx.turno_base || null;
+
+              // Si se marca ausencia en un puesto crítico, dejamos aviso pendiente (siempre se puede guardar).
+              if (
+                AUSENCIA_TYPES.includes(String(tipo).toUpperCase()) &&
+                puestoBase &&
+                turnoBase &&
+                sectorCtx &&
+                CRITICOS.includes(puestoBase)
+              ) {
+                db.run(
+                  `INSERT OR IGNORE INTO calendario_avisos_cobertura (fecha, sector, puesto, turno, legajo_ausente, tipo_ausencia)
+                 VALUES (?, ?, ?, ?, ?, ?)`,
+                  [
+                    fecha,
+                    sectorCtx,
+                    puestoBase,
+                    turnoBase,
+                    legajo,
+                    String(tipo).toUpperCase(),
+                  ],
+                  () => {},
+                );
+              }
+
+              // Si se crea un CAMBIO hacia un puesto crítico, intentamos resolver aviso pendiente de esa celda
+              const tipoUp = String(tipo).toUpperCase();
+              const targetPuesto = puesto_override || null;
+              const targetTurno = turno_override || null;
+              if (
+                tipoUp === "CAMBIO" &&
+                targetPuesto &&
+                targetTurno &&
+                sectorCtx &&
+                CRITICOS.includes(targetPuesto)
+              ) {
+                db.run(
+                  `UPDATE calendario_avisos_cobertura
+                 SET estado='RESUELTO', legajo_reemplazo=?, resolved_at=datetime('now')
+                 WHERE fecha=? AND sector=? AND puesto=? AND turno=? AND estado='PENDIENTE'`,
+                  [legajo, fecha, sectorCtx, targetPuesto, targetTurno],
+                  () => {},
+                );
+              }
+            } catch (e) {}
+
+            res.json({ ok: true, id: this.lastID, aviso: true });
+          },
+        );
+      }
+    },
+  );
+});
+
+// Avisos de cobertura (turnos críticos)
+app.get("/api/calendario/avisos", (req, res) => {
+  const { desde, hasta, sector } = req.query || {};
+  if (!desde || !hasta)
+    return res.status(400).json({ error: "Faltan parámetros (desde, hasta)" });
+
+  const params = [desde, hasta];
+  let sql = `SELECT * FROM calendario_avisos_cobertura
+             WHERE fecha >= ? AND fecha <= ? AND estado = 'PENDIENTE'`;
+  if (sector && sector !== "TODOS") {
+    sql += ` AND sector = ?`;
+    params.push(sector);
+  }
+  sql += ` ORDER BY fecha ASC, sector ASC, puesto ASC, turno ASC`;
+
+  db.all(sql, params, (err, rows) => {
+    if (err) return res.status(500).json({ error: "Error leyendo avisos" });
+    res.json(rows || []);
   });
 });
 
-app.delete('/api/calendario/excepciones/:id', (req, res) => {
+app.post("/api/calendario/avisos/resolver", (req, res) => {
+  const { fecha, sector, puesto, turno, legajo_reemplazo } = req.body || {};
+  if (!fecha || !sector || !puesto || !turno)
+    return res
+      .status(400)
+      .json({ error: "Faltan datos (fecha, sector, puesto, turno)" });
+
+  db.run(
+    `UPDATE calendario_avisos_cobertura
+     SET estado='RESUELTO', legajo_reemplazo = COALESCE(?, legajo_reemplazo), resolved_at = datetime('now')
+     WHERE fecha=? AND sector=? AND puesto=? AND turno=? AND estado='PENDIENTE'`,
+    [legajo_reemplazo || null, fecha, sector, puesto, turno],
+    function (err) {
+      if (err)
+        return res.status(500).json({ error: "Error resolviendo aviso" });
+      res.json({ ok: true, changes: this.changes });
+    },
+  );
+});
+app.delete("/api/calendario/excepciones/:id", (req, res) => {
   const id = Number(req.params.id);
-  db.run('DELETE FROM calendario_excepciones WHERE id = ?', [id], function (err) {
-    if (err) return res.status(500).json({ error: 'Error eliminando excepción' });
-    res.json({ ok: true });
-  });
+  db.run(
+    "DELETE FROM calendario_excepciones WHERE id = ?",
+    [id],
+    function (err) {
+      if (err)
+        return res.status(500).json({ error: "Error eliminando excepción" });
+      res.json({ ok: true });
+    },
+  );
 });
 
 // Calendario resuelto (por empleado)
 // Devuelve dias: { fecha, puesto, turno, hora_inicio_min, hora_fin_min, fuente, excepcion_id, excepcion? }
-app.get('/api/calendario/resuelto', async (req, res) => {
+app.get("/api/calendario/resuelto", async (req, res) => {
   const { legajo, desde, hasta } = req.query || {};
-  if (!legajo || !desde || !hasta) return res.status(400).json({ error: 'Faltan parámetros (legajo, desde, hasta)' });
+  if (!legajo || !desde || !hasta)
+    return res
+      .status(400)
+      .json({ error: "Faltan parámetros (legajo, desde, hasta)" });
 
   try {
-    const emp = await allSql('SELECT * FROM empleados WHERE legajo = ?', [legajo]);
-    if (!emp.length) return res.status(404).json({ error: 'Legajo inexistente' });
+    const emp = await allSql("SELECT * FROM empleados WHERE legajo = ?", [
+      legajo,
+    ]);
+    if (!emp.length)
+      return res.status(404).json({ error: "Legajo inexistente" });
     const empleado = emp[0];
 
-    const asign = await allSql('SELECT * FROM calendario_empleado_patron WHERE legajo = ?', [legajo]);
+    const asign = await allSql(
+      "SELECT * FROM calendario_empleado_patron WHERE legajo = ?",
+      [legajo],
+    );
     // Si el empleado no tiene un patrón asignado manualmente, intentamos usar el patrón por defecto del puesto
     let puestoDefaultPatron = null;
     if (!asign.length) {
-      const ph = await allSql('SELECT patron_id, patron_inicio FROM puesto_horarios WHERE puesto = ?', [empleado.puesto || '']);
+      const ph = await allSql(
+        "SELECT patron_id, patron_inicio FROM puesto_horarios WHERE puesto = ?",
+        [empleado.puesto || ""],
+      );
       if (ph?.length && ph[0]?.patron_id) {
         puestoDefaultPatron = {
           patron_id: Number(ph[0].patron_id),
@@ -2741,17 +3634,27 @@ app.get('/api/calendario/resuelto', async (req, res) => {
       }
     }
     const excepciones = await allSql(
-      'SELECT * FROM calendario_excepciones WHERE legajo=? AND fecha BETWEEN ? AND ? ORDER BY fecha',
-      [legajo, desde, hasta]
+      "SELECT * FROM calendario_excepciones WHERE legajo=? AND fecha BETWEEN ? AND ? ORDER BY fecha",
+      [legajo, desde, hasta],
     );
     const exMap = new Map(excepciones.map((x) => [x.fecha, x]));
 
     let patron = null;
     let detalleMap = new Map();
-    const patronSource = asign.length ? { patron_id: asign[0].patron_id, fecha_inicio: asign[0].fecha_inicio } : puestoDefaultPatron;
+    const patronSource = asign.length
+      ? { patron_id: asign[0].patron_id, fecha_inicio: asign[0].fecha_inicio }
+      : puestoDefaultPatron;
     if (patronSource?.patron_id) {
-      patron = (await allSql('SELECT * FROM calendario_patrones WHERE id = ?', [patronSource.patron_id]))[0] || null;
-      const det = await allSql('SELECT * FROM calendario_patron_detalle WHERE patron_id = ? ORDER BY dia_idx', [patronSource.patron_id]);
+      patron =
+        (
+          await allSql("SELECT * FROM calendario_patrones WHERE id = ?", [
+            patronSource.patron_id,
+          ])
+        )[0] || null;
+      const det = await allSql(
+        "SELECT * FROM calendario_patron_detalle WHERE patron_id = ? ORDER BY dia_idx",
+        [patronSource.patron_id],
+      );
       detalleMap = new Map(det.map((d) => [Number(d.dia_idx), d]));
     }
 
@@ -2759,38 +3662,43 @@ app.get('/api/calendario/resuelto', async (req, res) => {
     let curDate = desde;
     while (curDate <= hasta) {
       const ex = exMap.get(curDate);
-      let fuente = '';
-      let turno = '';
-      let puesto = '';
+      let fuente = "";
+      let turno = "";
+      let puesto = "";
       let excepcion_id = null;
 
       if (ex) {
-        fuente = 'Excepción';
+        fuente = "Excepción";
         excepcion_id = ex.id;
-        turno = ex.turno_override ? String(ex.turno_override).toUpperCase() : '';
-        puesto = ex.puesto_override || empleado.puesto || '';
+        turno = ex.turno_override
+          ? String(ex.turno_override).toUpperCase()
+          : "";
+        puesto = ex.puesto_override || empleado.puesto || "";
         if (!turno) {
-          const tipo = String(ex.tipo || '').toUpperCase();
-          if (['VACACIONES', 'LICENCIA', 'PERMISO', 'ENFERMEDAD'].includes(tipo)) turno = 'AUSENCIA';
-          if (tipo === 'FRANCO_EXTRA') turno = 'FRANCO';
+          const tipo = String(ex.tipo || "").toUpperCase();
+          if (
+            ["VACACIONES", "LICENCIA", "PERMISO", "ENFERMEDAD"].includes(tipo)
+          )
+            turno = "AUSENCIA";
+          if (["FRANCO", "FRANCO_EXTRA"].includes(tipo)) turno = "FRANCO";
         }
-        if (String(ex.tipo).toUpperCase() === 'FRANCO_EXTRA' && !turno) turno = 'FRANCO';
       } else if (patron && patronSource?.patron_id) {
-        fuente = asign.length ? 'Patrón (empleado)' : 'Patrón (puesto)';
+        fuente = asign.length ? "Patrón (empleado)" : "Patrón (puesto)";
         const diff = daysBetween(patronSource.fecha_inicio, curDate);
-        const idx = ((diff % patron.ciclo_dias) + patron.ciclo_dias) % patron.ciclo_dias;
+        const idx =
+          ((diff % patron.ciclo_dias) + patron.ciclo_dias) % patron.ciclo_dias;
         const d = detalleMap.get(idx);
-        turno = d ? String(d.turno).toUpperCase() : 'FRANCO';
-        puesto = d && d.puesto ? d.puesto : (empleado.puesto || '');
+        turno = d ? String(d.turno).toUpperCase() : "FRANCO";
+        puesto = d && d.puesto ? d.puesto : empleado.puesto || "";
       } else {
-        fuente = 'Sin patrón';
-        turno = '';
-        puesto = empleado.puesto || '';
+        fuente = "Sin patrón";
+        turno = "";
+        puesto = empleado.puesto || "";
       }
 
       let hora_inicio_min = null;
       let hora_fin_min = null;
-      if (['MANIANA', 'TARDE', 'NOCHE', 'FRANCO'].includes(turno)) {
+      if (["MANIANA", "TARDE", "NOCHE", "FRANCO"].includes(turno)) {
         const h = await turnoToHorario(puesto, turno);
         hora_inicio_min = h.inicio;
         hora_fin_min = h.fin;
@@ -2809,7 +3717,9 @@ app.get('/api/calendario/resuelto', async (req, res) => {
               id: ex.id,
               tipo: ex.tipo,
               puesto_override: ex.puesto_override,
-              turno_override: ex.turno_override ? String(ex.turno_override).toUpperCase() : '',
+              turno_override: ex.turno_override
+                ? String(ex.turno_override).toUpperCase()
+                : "",
               motivo: ex.motivo,
             }
           : null,
@@ -2821,49 +3731,73 @@ app.get('/api/calendario/resuelto', async (req, res) => {
     res.json({ ok: true, dias });
   } catch (e) {
     console.error(e);
-    res.status(500).json({ error: 'Error generando calendario' });
+    res.status(500).json({ error: "Error generando calendario" });
   }
 });
 
 // Calendario mensual para grilla (todos los empleados)
 // Devuelve items: { fecha, sector, puesto, turno, horario, legajo, nombre }
-app.get('/api/calendario/resuelto-mes', async (req, res) => {
+app.get("/api/calendario/resuelto-mes", async (req, res) => {
   const { desde, hasta } = req.query || {};
-  if (!desde || !hasta) return res.status(400).send('Faltan parametros desde/hasta');
+  if (!desde || !hasta)
+    return res.status(400).send("Faltan parametros desde/hasta");
 
   function normSectorForGrid(sector) {
     const g = sectorGroup(sector);
-    if (g === 'shop') return 'MINI';
-    if (g === 'playa') return 'PLAYA';
-    return 'PLAYA';
+    if (g === "shop") return "MINI";
+    if (g === "playa") return "PLAYA";
+    return "PLAYA";
   }
 
   function normPuestoForGrid(puesto) {
-    const p = String(puesto || '').toLowerCase().trim();
-    if (!p) return '';
-    if (p.includes('playero')) return 'Playero/a';
-    if (p.includes('auxiliar') && p.includes('playa')) return 'Auxiliar de playa';
-    if (p.includes('refuerzo') && p.includes('playa')) return 'Refuerzo de playa';
-    if (p.includes('cajer')) return 'Cajero/a';
-    if (p.includes('auxiliar') && (p.includes('shop') || p.includes('caja'))) return 'Auxiliar de shop';
+    const p = String(puesto || "")
+      .toLowerCase()
+      .trim();
+    if (!p) return "";
+    if (p.includes("playero")) return "Playero/a";
+    if (p.includes("auxiliar") && p.includes("playa"))
+      return "Auxiliar de playa";
+    if (p.includes("refuerzo") && p.includes("playa"))
+      return "Refuerzo de playa";
+    if (p.includes("cajer")) return "Cajero/a";
+    if (p.includes("auxiliar") && (p.includes("shop") || p.includes("caja")))
+      return "Auxiliar de shop";
     return puesto;
   }
 
+  // Derivar sector destino según puesto (para cambios entre PLAYA <-> MINI)
+  // En la grilla usamos 'PLAYA' y 'MINI' (shop). Esto evita que un CAMBIO de un
+  // empleado de PLAYA hacia 'Cajero/a' quede renderizado en PLAYA.
+  function sectorByPuestoGrid(puestoGrid) {
+    const p = String(puestoGrid || "")
+      .toLowerCase()
+      .trim();
+    if (!p) return "";
+    // MINI / SHOP
+    if (p.includes("cajer")) return "MINI";
+    if (p.includes("auxiliar") && p.includes("shop")) return "MINI";
+    // PLAYA
+    if (p.includes("playero")) return "PLAYA";
+    if (p.includes("auxiliar") && p.includes("playa")) return "PLAYA";
+    if (p.includes("refuerzo") && p.includes("playa")) return "PLAYA";
+    return "";
+  }
+
   function turnoLetter(turnoUpper) {
-    const t = String(turnoUpper || '').toUpperCase();
-    if (t === 'MANIANA') return 'M';
-    if (t === 'TARDE') return 'T';
-    if (t === 'NOCHE') return 'N';
-    return '';
+    const t = String(turnoUpper || "").toUpperCase();
+    if (t === "MANIANA") return "M";
+    if (t === "TARDE") return "T";
+    if (t === "NOCHE") return "N";
+    return "";
   }
 
   async function horarioKeyFor(puesto, turnoUpper) {
-    const t = String(turnoUpper || '').toUpperCase();
-    if (!puesto || !t) return '';
-    if (!['MANIANA', 'TARDE', 'NOCHE'].includes(t)) return '';
+    const t = String(turnoUpper || "").toUpperCase();
+    if (!puesto || !t) return "";
+    if (!["MANIANA", "TARDE", "NOCHE"].includes(t)) return "";
 
     const h = await turnoToHorario(puesto, t);
-    if (h.inicio == null || h.fin == null) return '';
+    if (h.inicio == null || h.fin == null) return "";
     const ini = minToHHMM(h.inicio);
     const fin = minToHHMM(h.fin);
     return `${ini}-${fin}`;
@@ -2873,10 +3807,16 @@ app.get('/api/calendario/resuelto-mes', async (req, res) => {
     const legajo = normLegajo(empleado.legajo);
     if (!legajo) return [];
 
-    const asign = await allSql('SELECT * FROM calendario_empleado_patron WHERE legajo = ?', [legajo]);
+    const asign = await allSql(
+      "SELECT * FROM calendario_empleado_patron WHERE legajo = ?",
+      [legajo],
+    );
     let puestoDefaultPatron = null;
     if (!asign.length) {
-      const ph = await allSql('SELECT patron_id, patron_inicio FROM puesto_horarios WHERE puesto = ?', [empleado.puesto || '']);
+      const ph = await allSql(
+        "SELECT patron_id, patron_inicio FROM puesto_horarios WHERE puesto = ?",
+        [empleado.puesto || ""],
+      );
       if (ph?.length && ph[0]?.patron_id) {
         puestoDefaultPatron = {
           patron_id: Number(ph[0].patron_id),
@@ -2885,17 +3825,27 @@ app.get('/api/calendario/resuelto-mes', async (req, res) => {
       }
     }
     const excepciones = await allSql(
-      'SELECT * FROM calendario_excepciones WHERE legajo=? AND fecha BETWEEN ? AND ? ORDER BY fecha',
-      [legajo, desde, hasta]
+      "SELECT * FROM calendario_excepciones WHERE legajo=? AND fecha BETWEEN ? AND ? ORDER BY fecha",
+      [legajo, desde, hasta],
     );
     const exMap = new Map(excepciones.map((x) => [x.fecha, x]));
 
     let patron = null;
     let detalleMap = new Map();
-    const patronSource = asign.length ? { patron_id: asign[0].patron_id, fecha_inicio: asign[0].fecha_inicio } : puestoDefaultPatron;
+    const patronSource = asign.length
+      ? { patron_id: asign[0].patron_id, fecha_inicio: asign[0].fecha_inicio }
+      : puestoDefaultPatron;
     if (patronSource?.patron_id) {
-      patron = (await allSql('SELECT * FROM calendario_patrones WHERE id = ?', [patronSource.patron_id]))[0] || null;
-      const det = await allSql('SELECT * FROM calendario_patron_detalle WHERE patron_id = ? ORDER BY dia_idx', [patronSource.patron_id]);
+      patron =
+        (
+          await allSql("SELECT * FROM calendario_patrones WHERE id = ?", [
+            patronSource.patron_id,
+          ])
+        )[0] || null;
+      const det = await allSql(
+        "SELECT * FROM calendario_patron_detalle WHERE patron_id = ? ORDER BY dia_idx",
+        [patronSource.patron_id],
+      );
       detalleMap = new Map(det.map((d) => [Number(d.dia_idx), d]));
     }
 
@@ -2903,40 +3853,64 @@ app.get('/api/calendario/resuelto-mes', async (req, res) => {
     let curDate = desde;
     while (curDate <= hasta) {
       const ex = exMap.get(curDate);
-      let turno = '';
-      let puesto = '';
+      let turno = "";
+      let puesto = "";
 
       if (ex) {
-        turno = ex.turno_override ? String(ex.turno_override).toUpperCase() : '';
-        puesto = ex.puesto_override || empleado.puesto || '';
-        if (!turno) {
-          const tipo = String(ex.tipo || '').toUpperCase();
-          if (['VACACIONES', 'LICENCIA', 'PERMISO', 'ENFERMEDAD'].includes(tipo)) turno = 'AUSENCIA';
-          if (tipo === 'FRANCO_EXTRA') turno = 'FRANCO';
+        const tipo = String(ex.tipo || "").toUpperCase();
+        // Franco: se registra la excepción, pero NO debe aparecer asignación en la grilla
+        if (["FRANCO", "FRANCO_EXTRA"].includes(tipo)) {
+          turno = "FRANCO";
+        } else {
+          turno = ex.turno_override
+            ? String(ex.turno_override).toUpperCase()
+            : "";
+          puesto = ex.puesto_override || empleado.puesto || "";
+          if (!turno) {
+            if (
+              ["VACACIONES", "LICENCIA", "PERMISO", "ENFERMEDAD"].includes(tipo)
+            )
+              turno = "AUSENCIA";
+          }
         }
+        if (!puesto) puesto = empleado.puesto || "";
       } else if (patron && patronSource?.patron_id) {
         const diff = daysBetween(patronSource.fecha_inicio, curDate);
-        const idx = ((diff % patron.ciclo_dias) + patron.ciclo_dias) % patron.ciclo_dias;
+        const idx =
+          ((diff % patron.ciclo_dias) + patron.ciclo_dias) % patron.ciclo_dias;
         const d = detalleMap.get(idx);
-        turno = d ? String(d.turno).toUpperCase() : 'FRANCO';
-        puesto = d && d.puesto ? d.puesto : (empleado.puesto || '');
+        turno = d ? String(d.turno).toUpperCase() : "FRANCO";
+        puesto = d && d.puesto ? d.puesto : empleado.puesto || "";
       } else {
-        turno = '';
-        puesto = empleado.puesto || '';
+        turno = "";
+        puesto = empleado.puesto || "";
       }
 
       const letra = turnoLetter(turno);
       if (letra) {
         const puestoGrid = normPuestoForGrid(puesto);
         const horario = await horarioKeyFor(puestoGrid, turno);
+
+        // Sector para grilla:
+        // - si el usuario definió sector_override, respetarlo
+        // - si hay CAMBIO de puesto (puesto_override) y no hay sector_override,
+        //   inferimos sector por puesto destino
+        // - si no, usamos sector del empleado
+        let sectorBase =
+          ex && ex.sector_override ? ex.sector_override : empleado.sector;
+        if (ex && ex.puesto_override && !ex.sector_override) {
+          const inferred = sectorByPuestoGrid(puestoGrid);
+          if (inferred) sectorBase = inferred;
+        }
+
         out.push({
           fecha: curDate,
-          sector: normSectorForGrid(empleado.sector),
+          sector: normSectorForGrid(sectorBase),
           puesto: puestoGrid,
           turno: letra,
           horario,
           legajo,
-          nombre: empleado.nombre || '',
+          nombre: empleado.nombre || "",
         });
       }
 
@@ -2947,7 +3921,9 @@ app.get('/api/calendario/resuelto-mes', async (req, res) => {
   }
 
   try {
-    const empleados = await allSql('SELECT legajo, nombre, puesto, sector FROM empleados WHERE activo=1 ORDER BY nombre');
+    const empleados = await allSql(
+      "SELECT legajo, nombre, puesto, sector FROM empleados WHERE activo=1 ORDER BY nombre",
+    );
     const salida = [];
     for (const emp of empleados) {
       const items = await resolveForEmpleado(emp);
@@ -2956,48 +3932,80 @@ app.get('/api/calendario/resuelto-mes', async (req, res) => {
     res.json(salida);
   } catch (e) {
     console.error(e);
-    res.status(500).send(e.message || 'Error generando calendario mensual');
+    res.status(500).send(e.message || "Error generando calendario mensual");
   }
 });
 
-
 // // Seed / actualización de patrones base (idempotente por NOMBRE)
 // Nota: si ya existen con el mismo nombre pero tenían el ciclo/orden mal, se corrigen.
-function deletePatronByName(nombre){
-  return new Promise((resolve)=>{
-    db.get('SELECT id FROM calendario_patrones WHERE nombre=?', [nombre], (err,row)=>{
-      if(err || !row?.id) return resolve();
-      const id=row.id;
-      db.run('DELETE FROM calendario_patron_detalle WHERE patron_id=?',[id], ()=>{
-        db.run('DELETE FROM calendario_patrones WHERE id=?',[id], ()=>resolve());
-      });
-    });
+function deletePatronByName(nombre) {
+  return new Promise((resolve) => {
+    db.get(
+      "SELECT id FROM calendario_patrones WHERE nombre=?",
+      [nombre],
+      (err, row) => {
+        if (err || !row?.id) return resolve();
+        const id = row.id;
+        db.run(
+          "DELETE FROM calendario_patron_detalle WHERE patron_id=?",
+          [id],
+          () => {
+            db.run("DELETE FROM calendario_patrones WHERE id=?", [id], () =>
+              resolve(),
+            );
+          },
+        );
+      },
+    );
   });
 }
 
 function ensurePatron(nombre, ciclo_dias, detalle) {
   return new Promise((resolve) => {
-    db.get('SELECT id FROM calendario_patrones WHERE nombre=?', [nombre], (err, row) => {
-      if (err) return resolve();
-      const upsertHeader = (id) => {
-        db.run('UPDATE calendario_patrones SET ciclo_dias=? WHERE id=?', [Number(ciclo_dias), id], () => {
-          db.run('DELETE FROM calendario_patron_detalle WHERE patron_id=?', [id], () => {
-            const stmt = db.prepare('INSERT INTO calendario_patron_detalle (patron_id, dia_idx, turno, puesto) VALUES (?,?,?,?)');
-            (detalle || []).forEach((d) => {
-              stmt.run([id, Number(d.dia_idx), String(d.turno || '').toUpperCase(), d.puesto || null]);
-            });
-            stmt.finalize(() => resolve());
-          });
-        });
-      };
+    db.get(
+      "SELECT id FROM calendario_patrones WHERE nombre=?",
+      [nombre],
+      (err, row) => {
+        if (err) return resolve();
+        const upsertHeader = (id) => {
+          db.run(
+            "UPDATE calendario_patrones SET ciclo_dias=? WHERE id=?",
+            [Number(ciclo_dias), id],
+            () => {
+              db.run(
+                "DELETE FROM calendario_patron_detalle WHERE patron_id=?",
+                [id],
+                () => {
+                  const stmt = db.prepare(
+                    "INSERT INTO calendario_patron_detalle (patron_id, dia_idx, turno, puesto) VALUES (?,?,?,?)",
+                  );
+                  (detalle || []).forEach((d) => {
+                    stmt.run([
+                      id,
+                      Number(d.dia_idx),
+                      String(d.turno || "").toUpperCase(),
+                      d.puesto || null,
+                    ]);
+                  });
+                  stmt.finalize(() => resolve());
+                },
+              );
+            },
+          );
+        };
 
-      if (row?.id) return upsertHeader(row.id);
+        if (row?.id) return upsertHeader(row.id);
 
-      db.run('INSERT INTO calendario_patrones (nombre, ciclo_dias) VALUES (?, ?)', [nombre, Number(ciclo_dias)], function (err2) {
-        if (err2) return resolve();
-        upsertHeader(this.lastID);
-      });
-    });
+        db.run(
+          "INSERT INTO calendario_patrones (nombre, ciclo_dias) VALUES (?, ?)",
+          [nombre, Number(ciclo_dias)],
+          function (err2) {
+            if (err2) return resolve();
+            upsertHeader(this.lastID);
+          },
+        );
+      },
+    );
   });
 }
 
@@ -3014,107 +4022,143 @@ function ensurePatron(nombre, ciclo_dias, detalle) {
   try {
     // Limpieza de patrones viejos/duplicados (para que no aparezcan en el combo)
     const obsolete = [
-      'Auxiliar de shop — L a V Mañana fijo (7d)',
-      'Auxiliar de playa — L a V Mañana + finde manual (7d)',
-      'Auxiliar de playa — L a V Tarde + finde manual (7d)'
+      "Auxiliar de shop — L a V Mañana fijo (7d)",
+      "Auxiliar de playa — L a V Mañana + finde manual (7d)",
+      "Auxiliar de playa — L a V Tarde + finde manual (7d)",
     ];
 
     // Desasociar referencias (por si quedaron en configuraciones viejas)
     await run(
       `UPDATE puesto_horarios
        SET patron_id = NULL
-       WHERE patron_id IN (SELECT id FROM calendario_patrones WHERE nombre IN (${obsolete.map(()=>'?').join(',')}))`,
-      obsolete
+       WHERE patron_id IN (SELECT id FROM calendario_patrones WHERE nombre IN (${obsolete.map(() => "?").join(",")}))`,
+      obsolete,
     );
     await run(
       `UPDATE calendario_empleado_patron
        SET patron_id = NULL
-       WHERE patron_id IN (SELECT id FROM calendario_patrones WHERE nombre IN (${obsolete.map(()=>'?').join(',')}))`,
-      obsolete
+       WHERE patron_id IN (SELECT id FROM calendario_patrones WHERE nombre IN (${obsolete.map(() => "?").join(",")}))`,
+      obsolete,
     );
 
     await run(
       `DELETE FROM calendario_patron_detalle
-       WHERE patron_id IN (SELECT id FROM calendario_patrones WHERE nombre IN (${obsolete.map(()=>'?').join(',')}))`,
-      obsolete
+       WHERE patron_id IN (SELECT id FROM calendario_patrones WHERE nombre IN (${obsolete.map(() => "?").join(",")}))`,
+      obsolete,
     );
     await run(
       `DELETE FROM calendario_patrones
-       WHERE nombre IN (${obsolete.map(()=>'?').join(',')})`,
-      obsolete
+       WHERE nombre IN (${obsolete.map(() => "?").join(",")})`,
+      obsolete,
     );
 
-    await ensurePatron('Fijo Mañana (trabaja)', 1, [
-      { dia_idx: 0, turno: 'MANIANA', puesto: null },
+    await ensurePatron("Fijo Mañana (trabaja)", 1, [
+      { dia_idx: 0, turno: "MANIANA", puesto: null },
     ]);
 
     // PLAYEROS: 5xM + 1F - 5xT + 1F - 5xN + 3F  (20 días)
-    await ensurePatron('Playero/a — 5M+1F+5T+1F+5N+3F (20d)', 20, [
-      ...Array.from({ length: 5 }).map((_, i) => ({ dia_idx: i, turno: 'MANIANA', puesto: null })),
-      { dia_idx: 5, turno: 'FRANCO', puesto: null },
-      ...Array.from({ length: 5 }).map((_, i) => ({ dia_idx: 6 + i, turno: 'TARDE', puesto: null })),
-      { dia_idx: 11, turno: 'FRANCO', puesto: null },
-      ...Array.from({ length: 5 }).map((_, i) => ({ dia_idx: 12 + i, turno: 'NOCHE', puesto: null })),
-      { dia_idx: 17, turno: 'FRANCO', puesto: null },
-      { dia_idx: 18, turno: 'FRANCO', puesto: null },
-      { dia_idx: 19, turno: 'FRANCO', puesto: null },
+    await ensurePatron("Playero/a — 5M+1F+5T+1F+5N+3F (20d)", 20, [
+      ...Array.from({ length: 5 }).map((_, i) => ({
+        dia_idx: i,
+        turno: "MANIANA",
+        puesto: null,
+      })),
+      { dia_idx: 5, turno: "FRANCO", puesto: null },
+      ...Array.from({ length: 5 }).map((_, i) => ({
+        dia_idx: 6 + i,
+        turno: "TARDE",
+        puesto: null,
+      })),
+      { dia_idx: 11, turno: "FRANCO", puesto: null },
+      ...Array.from({ length: 5 }).map((_, i) => ({
+        dia_idx: 12 + i,
+        turno: "NOCHE",
+        puesto: null,
+      })),
+      { dia_idx: 17, turno: "FRANCO", puesto: null },
+      { dia_idx: 18, turno: "FRANCO", puesto: null },
+      { dia_idx: 19, turno: "FRANCO", puesto: null },
     ]);
 
     // CAJERO SHOP: 4xM + 2F - 4xT + 2F  (12 días)
-    await ensurePatron('Cajero/a — 4M+2F+4T+2F (12d)', 12, [
-      ...Array.from({ length: 4 }).map((_, i) => ({ dia_idx: i, turno: 'MANIANA', puesto: null })),
-      { dia_idx: 4, turno: 'FRANCO', puesto: null },
-      { dia_idx: 5, turno: 'FRANCO', puesto: null },
-      ...Array.from({ length: 4 }).map((_, i) => ({ dia_idx: 6 + i, turno: 'TARDE', puesto: null })),
-      { dia_idx: 10, turno: 'FRANCO', puesto: null },
-      { dia_idx: 11, turno: 'FRANCO', puesto: null },
+    await ensurePatron("Cajero/a — 4M+2F+4T+2F (12d)", 12, [
+      ...Array.from({ length: 4 }).map((_, i) => ({
+        dia_idx: i,
+        turno: "MANIANA",
+        puesto: null,
+      })),
+      { dia_idx: 4, turno: "FRANCO", puesto: null },
+      { dia_idx: 5, turno: "FRANCO", puesto: null },
+      ...Array.from({ length: 4 }).map((_, i) => ({
+        dia_idx: 6 + i,
+        turno: "TARDE",
+        puesto: null,
+      })),
+      { dia_idx: 10, turno: "FRANCO", puesto: null },
+      { dia_idx: 11, turno: "FRANCO", puesto: null },
     ]);
 
     // AUXILIAR DE PLAYA: rota 1 semana Mañana + 1 semana Tarde; fines de semana manual (FRANCO)
     // Limpieza de patrones antiguos (si existían como dos opciones separadas)
-    await deletePatronByName('Auxiliar de playa — L a V Mañana + finde manual (7d)');
-    await deletePatronByName('Auxiliar de playa — L a V Tarde + finde manual (7d)');
+    await deletePatronByName(
+      "Auxiliar de playa — L a V Mañana + finde manual (7d)",
+    );
+    await deletePatronByName(
+      "Auxiliar de playa — L a V Tarde + finde manual (7d)",
+    );
 
-    await ensurePatron('Auxiliar de playa — L a V Mañana + L a V Tarde + findes manuales (14d)', 14, [
-      // Semana 1: L-V Mañana
-      { dia_idx: 0, turno: 'MANIANA', puesto: null }, // L
-      { dia_idx: 1, turno: 'MANIANA', puesto: null }, // M
-      { dia_idx: 2, turno: 'MANIANA', puesto: null }, // X
-      { dia_idx: 3, turno: 'MANIANA', puesto: null }, // J
-      { dia_idx: 4, turno: 'MANIANA', puesto: null }, // V
-      { dia_idx: 5, turno: 'FRANCO', puesto: null },  // S (manual)
-      { dia_idx: 6, turno: 'FRANCO', puesto: null },  // D (manual)
-      // Semana 2: L-V Tarde
-      { dia_idx: 7, turno: 'TARDE', puesto: null }, // L
-      { dia_idx: 8, turno: 'TARDE', puesto: null }, // M
-      { dia_idx: 9, turno: 'TARDE', puesto: null }, // X
-      { dia_idx: 10, turno: 'TARDE', puesto: null }, // J
-      { dia_idx: 11, turno: 'TARDE', puesto: null }, // V
-      { dia_idx: 12, turno: 'FRANCO', puesto: null }, // S (manual)
-      { dia_idx: 13, turno: 'FRANCO', puesto: null }, // D (manual)
-    ]);
+    await ensurePatron(
+      "Auxiliar de playa — L a V Mañana + L a V Tarde + findes manuales (14d)",
+      14,
+      [
+        // Semana 1: L-V Mañana
+        { dia_idx: 0, turno: "MANIANA", puesto: null }, // L
+        { dia_idx: 1, turno: "MANIANA", puesto: null }, // M
+        { dia_idx: 2, turno: "MANIANA", puesto: null }, // X
+        { dia_idx: 3, turno: "MANIANA", puesto: null }, // J
+        { dia_idx: 4, turno: "MANIANA", puesto: null }, // V
+        { dia_idx: 5, turno: "FRANCO", puesto: null }, // S (manual)
+        { dia_idx: 6, turno: "FRANCO", puesto: null }, // D (manual)
+        // Semana 2: L-V Tarde
+        { dia_idx: 7, turno: "TARDE", puesto: null }, // L
+        { dia_idx: 8, turno: "TARDE", puesto: null }, // M
+        { dia_idx: 9, turno: "TARDE", puesto: null }, // X
+        { dia_idx: 10, turno: "TARDE", puesto: null }, // J
+        { dia_idx: 11, turno: "TARDE", puesto: null }, // V
+        { dia_idx: 12, turno: "FRANCO", puesto: null }, // S (manual)
+        { dia_idx: 13, turno: "FRANCO", puesto: null }, // D (manual)
+      ],
+    );
 
     // AUXILIAR SHOP: L-V mañana; fines de semana manual (FRANCO)
-    await ensurePatron('Auxiliar de shop — L a V Mañana + findes manuales (7d)', 7, [
-      { dia_idx: 0, turno: 'MANIANA', puesto: null },
-      { dia_idx: 1, turno: 'MANIANA', puesto: null },
-      { dia_idx: 2, turno: 'MANIANA', puesto: null },
-      { dia_idx: 3, turno: 'MANIANA', puesto: null },
-      { dia_idx: 4, turno: 'MANIANA', puesto: null },
-      { dia_idx: 5, turno: 'FRANCO', puesto: null },
-      { dia_idx: 6, turno: 'FRANCO', puesto: null },
-    ]);
+    await ensurePatron(
+      "Auxiliar de shop — L a V Mañana + findes manuales (7d)",
+      7,
+      [
+        { dia_idx: 0, turno: "MANIANA", puesto: null },
+        { dia_idx: 1, turno: "MANIANA", puesto: null },
+        { dia_idx: 2, turno: "MANIANA", puesto: null },
+        { dia_idx: 3, turno: "MANIANA", puesto: null },
+        { dia_idx: 4, turno: "MANIANA", puesto: null },
+        { dia_idx: 5, turno: "FRANCO", puesto: null },
+        { dia_idx: 6, turno: "FRANCO", puesto: null },
+      ],
+    );
 
     // REFUERZO PLAYA: L-V 09-13 y 17-21; fines de semana manual (FRANCO)
-    await ensurePatron('Refuerzo de playa — L a V 9-13 y 17-21 + findes manuales (7d)', 7, [
-      { dia_idx: 0, turno: 'MANIANA', puesto: 'Refuerzo de playa' },
-      { dia_idx: 1, turno: 'MANIANA', puesto: 'Refuerzo de playa' },
-      { dia_idx: 2, turno: 'MANIANA', puesto: 'Refuerzo de playa' },
-      { dia_idx: 3, turno: 'MANIANA', puesto: 'Refuerzo de playa' },
-      { dia_idx: 4, turno: 'MANIANA', puesto: 'Refuerzo de playa' },
-      { dia_idx: 5, turno: 'FRANCO', puesto: 'Refuerzo de playa' }, // S (manual)
-      { dia_idx: 6, turno: 'FRANCO', puesto: 'Refuerzo de playa' }, // D (manual)
-    ]);
+    await ensurePatron(
+      "Refuerzo de playa — L a V 9-13 y 17-21 + findes manuales (7d)",
+      7,
+      [
+        { dia_idx: 0, turno: "MANIANA", puesto: "Refuerzo de playa" },
+        { dia_idx: 1, turno: "MANIANA", puesto: "Refuerzo de playa" },
+        { dia_idx: 2, turno: "MANIANA", puesto: "Refuerzo de playa" },
+        { dia_idx: 3, turno: "MANIANA", puesto: "Refuerzo de playa" },
+        { dia_idx: 4, turno: "MANIANA", puesto: "Refuerzo de playa" },
+        { dia_idx: 5, turno: "FRANCO", puesto: "Refuerzo de playa" }, // S (manual)
+        { dia_idx: 6, turno: "FRANCO", puesto: "Refuerzo de playa" }, // D (manual)
+      ],
+    );
 
     // Horario por puesto para Refuerzo (dos franjas): 09-13 y 17-21
     await run(
@@ -3125,12 +4169,13 @@ function ensurePatron(nombre, ciclo_dias, detalle) {
          manana_end=excluded.manana_end,
          tarde_start=excluded.tarde_start,
          tarde_end=excluded.tarde_end`,
-      ['Refuerzo de playa', 9*60, 13*60, 17*60, 21*60]
+      ["Refuerzo de playa", 9 * 60, 13 * 60, 17 * 60, 21 * 60],
     );
-
   } catch (e) {
     // no tirar abajo el server por seed
-    console.error('Seed patrones: ', e?.message || e);
+    console.error("Seed patrones: ", e?.message || e);
   }
 })();
-app.listen(PORT, () => console.log(`✅ KM325 corriendo en http://localhost:${PORT}`));
+app.listen(PORT, () =>
+  console.log(`✅ KM325 corriendo en http://localhost:${PORT}`),
+);

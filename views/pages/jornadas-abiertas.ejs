@@ -124,8 +124,30 @@
 
             <input id="c_id" type="hidden" />
             <label>Legajo<input id="c_legajo" disabled /></label>
+
+            <label>Horario registrado (pendiente)<input id="c_existente" disabled /></label>
+
+            <div style="display:flex; gap:14px; align-items:center; flex-wrap:wrap; margin:10px 0 2px;">
+              <label style="display:flex; gap:8px; align-items:center; font-weight:700;">
+                <input type="radio" name="c_tipo" id="c_tipo_entrada" value="entrada" checked />
+                Es <span style="color: var(--gulf-orange);">ENTRADA</span>
+              </label>
+              <label style="display:flex; gap:8px; align-items:center; font-weight:700;">
+                <input type="radio" name="c_tipo" id="c_tipo_salida" value="salida" />
+                Es <span style="color: var(--gulf-blue);">SALIDA</span>
+              </label>
+              <div class="small" style="opacity:.9;">
+                Elegí qué representa el horario registrado y completá el horario faltante.
+              </div>
+            </div>
+
             <label>Fecha salida<input id="c_fecha_salida" type="date" /></label>
-            <label>Hora salida<input id="c_salida" type="time" /></label>
+
+            <!-- Cuando el horario registrado es ENTRADA, completás SALIDA -->
+            <label id="c_grp_salida">Hora salida<input id="c_salida" type="time" /></label>
+
+            <!-- Cuando el horario registrado es SALIDA, completás ENTRADA -->
+            <label id="c_grp_entrada" style="display:none;">Hora entrada<input id="c_entrada" type="time" /></label>
 
             <div class="modal-actions">
               <button class="btn" id="c_cancelar" type="button">

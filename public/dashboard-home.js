@@ -12,7 +12,7 @@
 
   async function safeJson(url) {
     try {
-      const r = await fetch(url);
+      const r = await fetch(url, { cache: 'no-store' });
       if (!r.ok) return null;
       return await r.json();
     } catch (e) {
@@ -20,34 +20,69 @@
     }
   }
 
-  // These endpoints are optional; if they don't exist yet, we keep the placeholder.
   const dash = await safeJson('/api/dashboard');
   if (!dash) return;
 
-  if (dash.ultimos_arqueos) elA.textContent = dash.ultimos_arqueos;
-  if (dash.ultimas_asistencias) elB.textContent = dash.ultimas_asistencias;
-  if (dash.ultimas_novedades) elC.textContent = dash.ultimas_novedades;
+  // Tolerancia: distintas versiones del backend pueden exponer diferentes nombres.
+  const last3Asi = Array.isArray(dash.ultimos_asistencias)
+    ? dash.ultimos_asistencias.slice(0, 3)
+    : (dash.ultimos_movimientos && Array.isArray(dash.ultimos_movimientos.asistencias))
+      ? dash.ultimos_movimientos.asistencias.slice(0, 3)
+      : [];
 
-  // v2 fields (si existen)
+  const last3Arq = Array.isArray(dash.ultimos_arqueos)
+    ? dash.ultimos_arqueos.slice(0, 3)
+    : (dash.ultimos_movimientos && Array.isArray(dash.ultimos_movimientos.arqueos))
+      ? dash.ultimos_movimientos.arqueos.slice(0, 3)
+      : [];
+
+  // Cards (arriba)
+  if (last3Asi.length) {
+    const c = (last3Asi[0].cant ?? last3Asi[0].registros ?? 0);
+    elB.textContent = `${last3Asi[0].fecha} (${c} registros)`;
+  } else if (typeof dash.ultimas_asistencias === 'string' && dash.ultimas_asistencias.trim()) {
+    elB.textContent = dash.ultimas_asistencias;
+  }
+
+  if (last3Arq.length) {
+    const c = (last3Arq[0].cant ?? last3Arq[0].total_turnos ?? 0);
+    elA.textContent = `${last3Arq[0].fecha} (${c} turnos)`;
+  } else if (typeof dash.ultimos_arqueos === 'string' && dash.ultimos_arqueos.trim()) {
+    elA.textContent = dash.ultimos_arqueos;
+  }
+
+  // Jornadas abiertas
   if (elJorn && dash.jornadas_abiertas && typeof dash.jornadas_abiertas.pendientes === 'number') {
     elJorn.textContent = String(dash.jornadas_abiertas.pendientes);
   }
 
-  if (elAsiAyer && dash.asistencias) {
-    const a = dash.asistencias;
-    if (a.ayer_fecha) {
-      elAsiAyer.textContent = a.ayer_cargado ? `Ayer (${a.ayer_fecha}): OK (${a.ayer_cant})` : `Ayer (${a.ayer_fecha}): falta cargar`;
+  // Subtexto “últimos movimientos”
+  if (elAsiAyer) {
+    if (last3Asi.length) {
+      elAsiAyer.textContent = `Últimos movimientos: ${last3Asi.map(x => {
+        const c = (x.cant ?? x.registros ?? 0);
+        return `${x.fecha} (${c})`;
+      }).join(' · ')}`;
     }
   }
 
-  if (elArqEstado && dash.arqueos && dash.arqueos.estado) {
-    const st = dash.arqueos.estado;
-    const f = dash.arqueos.fecha_estado || '';
-    const playa = st.playa ? `${st.playa.cargados}/${st.playa.esperados}` : '0/3';
-    const shop = st.shop ? `${st.shop.cargados}/${st.shop.esperados}` : '0/2';
-    elArqEstado.textContent = `Estado ${f}: Playa ${playa} • Shop ${shop}`;
+  if (elArqEstado) {
+    // v1/v2: si el backend trae string estado, lo mostramos
+    const fromArray = last3Arq.length ? (last3Arq[0].estado || '') : '';
+    const fromObj = dash.arqueos && dash.arqueos.estado ? dash.arqueos.estado : null;
+
+    if (fromArray) {
+      elArqEstado.textContent = fromArray;
+    } else if (fromObj) {
+      const st = fromObj;
+      const f = dash.arqueos.fecha_estado || '';
+      const playa = st.playa ? `${st.playa.cargados}/${st.playa.esperados}` : '0/3';
+      const shop = st.shop ? `${st.shop.cargados}/${st.shop.esperados}` : '0/2';
+      elArqEstado.textContent = `Estado ${f}: Playa ${playa} • Shop ${shop}`;
+    }
   }
 
+  // Alertas
   if (elAlerts) {
     const items = Array.isArray(dash.alertas) ? dash.alertas : [];
     if (!items.length) {

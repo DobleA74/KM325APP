@@ -573,11 +573,11 @@ body{ overflow-x: hidden; }
    HOME (Inicio)
    - Hero con imagen de fondo
    ========================= */
-body.home{ background:#0b1b3d; }
+body.home{ background:transparent; }
 
 .home-hero{
   position:relative;
-  min-height: calc(100vh - 86px);
+  min-height: calc(100vh - 58px);
   display:flex;
   align-items:center;
   justify-content:center;
@@ -816,4 +816,93 @@ body{
   font-size:12px;
   font-weight:700;
   color:#0f172a;
+}
+
+
+/* Calendario grilla: botón + y avisos */
+.kmcell{ position:relative; }
+.kmplus{
+  position:absolute;
+  top:6px;
+  right:6px;
+  width:20px;
+  height:20px;
+  border-radius:999px;
+  border:1px solid rgba(2,6,23,.18);
+  background:#fff;
+  font-weight:700;
+  line-height:18px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  cursor:pointer;
+  opacity:0;
+  transform: scale(.96);
+  transition: opacity .12s ease, transform .12s ease, box-shadow .12s ease;
+}
+.kmcell:hover .kmplus{ opacity:1; transform: scale(1); box-shadow: 0 4px 10px rgba(2,6,23,.10); }
+
+.covwarn{
+  position:absolute;
+  top:6px;
+  left:6px;
+  font-size:14px;
+  line-height:14px;
+}
+
+/* =========================
+   HOME – FIX LIMPIO (ÚNICO)
+   ========================= */
+
+/* en home no usamos el padding del footer global */
+body.home{
+  background: transparent !important;
+  padding-bottom: 0 !important;
+  margin: 0;
+  overflow-x: hidden;
+}
+
+/* topbar fijo y con altura controlada */
+body.home .topbar{
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  z-index: 50;
+  height: 72px;
+  min-height: 72px;
+  padding: 14px 18px;
+  overflow: hidden;
+}
+
+/* hero ocupa la ventana (debajo del topbar) */
+body.home .home-hero{
+  min-height: calc(100vh - 72px);
+  height: calc(100vh - 72px);
+  margin-top: 72px;        /* baja el hero debajo del header */
+  overflow: hidden;
+}
+
+/* fondo del hero */
+body.home .home-hero__bg,
+body.home .home-hero__overlay{
+  position: absolute;
+  inset: 0;
+}
+
+/* footer fijo SOLO en home y sin afectar layout */
+body.home .app-footer{
+  position: fixed;
+  left: 0; right: 0; bottom: 0;
+  z-index: 50;
+}
+
+/* para que el contenido no quede tapado por el footer */
+body.home .home-hero__content{
+  position: relative;
+  z-index: 2;
+  margin-bottom: 70px;
+}
+/* Oculta la franja superior “duplicada” que viene en la imagen */
+.home-hero__bg{
+  background-position: center -140px !important; /* probá -80, -120, -180 */
+  transform: scale(1.12) !important;            /* compensa el recorte */
 }

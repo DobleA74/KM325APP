@@ -41,12 +41,14 @@ if(window.__KM325_FALTA_FIRST__){
   if(m_nombre && emp?.nombre) m_nombre.value = emp.nombre;
   if(m_fecha_entrada && fecha) m_fecha_entrada.value = fecha;
 
+  // Usamos esto para, una vez cargada la tabla, abrir directamente el caso a regularizar
+  window.__KM325_FALTA_TARGET__ = { legajo: String(emp?.legajo||''), fecha: String(fecha||'') };
+
   if(status){
     const total = (window.__KM325_FALTAS_PENDIENTES__||[]).reduce((acc,f)=> acc + ((f.empleados||[]).length||0), 0);
     status.textContent = `Venís desde "Fichada incompleta": ${total} caso(s) para regularizar. Cargá/edita manualmente y refrescá la lista.`;
   }
 }
-
 
 // modal editar
 const modalEdit = $("modal-edit");
@@ -64,8 +66,14 @@ const e_guardar = $("e_guardar");
 const modalCerrar = $("modal-cerrar");
 const c_id = $("c_id");
 const c_legajo = $("c_legajo");
+const c_existente = $("c_existente");
+const c_tipo_entrada = $("c_tipo_entrada");
+const c_tipo_salida = $("c_tipo_salida");
 const c_fecha_salida = $("c_fecha_salida");
 const c_salida = $("c_salida");
+const c_entrada = $("c_entrada");
+const c_grp_salida = $("c_grp_salida");
+const c_grp_entrada = $("c_grp_entrada");
 const c_cancelar = $("c_cancelar");
 const c_confirmar = $("c_confirmar");
 
@@ -120,6 +128,21 @@ function openModal(el) {
 function closeModal(el) {
   el.classList.remove("open");
 }
+
+// --- Cerrar jornada: permitir decidir si el horario existente es ENTRADA o SALIDA
+function syncCerrarUI(){
+  const tipo = c_tipo_salida?.checked ? "salida" : "entrada";
+  if(tipo === "entrada"){
+    if(c_grp_salida) c_grp_salida.style.display = "";
+    if(c_grp_entrada) c_grp_entrada.style.display = "none";
+  }else{
+    if(c_grp_salida) c_grp_salida.style.display = "none";
+    if(c_grp_entrada) c_grp_entrada.style.display = "";
+  }
+}
+
+c_tipo_entrada?.addEventListener("change", syncCerrarUI);
+c_tipo_salida?.addEventListener("change", syncCerrarUI);
 
 e_cancelar?.addEventListener("click", () => closeModal(modalEdit));
 c_cancelar?.addEventListener("click", () => closeModal(modalCerrar));
@@ -198,6 +221,17 @@ async function cargar() {
   initSorter();
   sorter?.setRows(rowsCache); // ✅ re-aplica orden actual
   render();
+
+  // Si venimos desde el modal "Fichada incompleta", intentamos abrir automáticamente
+  // la jornada abierta correspondiente (si existe) para que el usuario complete el horario faltante.
+  if(window.__KM325_FALTA_TARGET__ && !window.__KM325_FALTA_TARGET_DONE__){
+    const t = window.__KM325_FALTA_TARGET__;
+    const match = rowsCache.find(r => String(r.legajo) === String(t.legajo) && String(r.fecha_entrada) === String(t.fecha));
+    if(match){
+      window.__KM325_FALTA_TARGET_DONE__ = true;
+      openClose(Number(match.id));
+    }
+  }
 }
 
 async function crear() {
@@ -270,27 +304,72 @@ function openClose(id) {
 
   c_id.value = r.id;
   c_legajo.value = r.legajo || "";
-  c_fecha_salida.value = new Date().toISOString().slice(0, 10);
-  c_salida.value = "";
+  if(c_existente) c_existente.value = r.entrada || "";
+
+  // Default: usamos la fecha de entrada como base (sobre todo para turnos noche)
+  c_fecha_salida.value = r.fecha_entrada || new Date().toISOString().slice(0, 10);
+
+  // Por defecto interpretamos el "horario registrado" como ENTRADA (es lo que guarda la tabla)
+  if(c_tipo_entrada) c_tipo_entrada.checked = true;
+  if(c_tipo_salida) c_tipo_salida.checked = false;
+
+  // El usuario completa el horario faltante
+  if(c_salida) c_salida.value = "";
+  if(c_entrada) c_entrada.value = "";
+  syncCerrarUI();
 
   openModal(modalCerrar);
 }
 
 async function confirmarCierre() {
   const id = Number(c_id.value);
-  const body = { fecha_salida: c_fecha_salida.value, salida: c_salida.value };
 
-  if (!body.fecha_salida || !body.salida)
-    return alert("Falta fecha salida / hora salida");
+  const fecha_salida = String(c_fecha_salida?.value || "").trim();
+  if(!fecha_salida) return alert("Falta fecha salida");
 
-  const res = await fetch(`/api/jornadas-abiertas/${id}/cerrar`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  const horarioRegistrado = String(c_existente?.value || "").trim();
+  const tipo = c_tipo_salida?.checked ? "salida" : "entrada";
 
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok || !data.ok) return alert(data.error || "No se pudo cerrar");
+  // Caso A: horario registrado = ENTRADA -> el usuario completa SALIDA
+  if(tipo === "entrada"){
+    const salida = String(c_salida?.value || "").trim();
+    if(!salida) return alert("Falta hora salida");
+
+    const res = await fetch(`/api/jornadas-abiertas/${id}/cerrar`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ fecha_salida, salida }),
+    });
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) return alert(data.error || "No se pudo cerrar");
+  }
+
+  // Caso B: horario registrado = SALIDA -> el usuario completa ENTRADA
+  else {
+    if(!horarioRegistrado) return alert("No hay horario registrado para usar como salida");
+    const entrada = String(c_entrada?.value || "").trim();
+    if(!entrada) return alert("Falta hora entrada");
+
+    // 1) Actualizamos la jornada abierta para que su 'entrada' sea la que completa el usuario
+    const resUp = await fetch(`/api/jornadas-abiertas/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ entrada }),
+    });
+    const up = await resUp.json().catch(() => ({}));
+    if(!resUp.ok || !up.ok) return alert(up.error || "No se pudo guardar la entrada");
+
+    // 2) Cerramos usando como salida el horario registrado
+    const res = await fetch(`/api/jornadas-abiertas/${id}/cerrar`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ fecha_salida, salida: horarioRegistrado }),
+    });
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) return alert(data.error || "No se pudo cerrar");
+  }
 
   closeModal(modalCerrar);
   await cargar();
