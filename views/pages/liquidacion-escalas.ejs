@@ -1,0 +1,51 @@
+<%- include('../partials/document-start', { pageTitle }) %>
+<%- include('../partials/topbar', { topbarMode, subtitle: 'Gestión RRHH' }) %>
+
+<main class="container">
+  <section class="card">
+    <h1>Escalas salariales</h1>
+    <p>
+      Cargá por mes y categoría: <strong>Básico</strong>, <strong>Premio Asistencia</strong> y <strong>Premio Manejo de Fondos</strong>.
+      La liquidación toma estos valores según la categoría del empleado.
+    </p>
+
+    <div class="row" style="align-items:flex-end; gap:12px; flex-wrap:wrap">
+      <div class="field">
+        <label>Mes</label>
+        <input type="month" id="mes" />
+      </div>
+      <button class="btn" id="btn-cargar" type="button">Cargar</button>
+      <a class="btn ghost" href="/liquidacion">Volver</a>
+      <div class="notice" id="msg" style="flex:1; min-width:260px">Listo.</div>
+    </div>
+
+    <hr class="sep" />
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr class="thead-blue">
+            <th>Categoría</th>
+            <th>Básico</th>
+            <th>Premio Asistencia</th>
+            <th>Premio Manejo Fondos</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+
+    <div class="row" style="margin-top:12px; gap:10px; flex-wrap:wrap">
+      <button class="btn primary" id="btn-add" type="button">Agregar fila</button>
+    </div>
+
+    <p class="small" style="margin-top:10px">
+      Tip: las categorías son texto libre (ej: Operario, Administrativo, Encargado). Asegurate de que coincidan con la categoría cargada en el ABM de empleados.
+    </p>
+  </section>
+</main>
+
+<%- include('../partials/footer') %>
+<script src="/liquidacion-escalas.js"></script>
+<%- include('../partials/document-end') %>

@@ -1,0 +1,93 @@
+<%- include('../partials/document-start', { pageTitle }) %>
+
+<style>
+  .print-header { display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap; }
+  .print-header h1 { margin:0; }
+  .print-actions { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+
+  /*
+    Esta vista debe verse e imprimirse SIEMPRE como tabla.
+    app.css (global) convierte tablas a "cards" cuando el viewport es angosto.
+    En el PDF queremos exactamente el formato de tabla (como en /liquidacion).
+  */
+  .pdf-table thead{ display: table-header-group !important; }
+  .pdf-table tbody tr{ display: table-row !important; }
+  .pdf-table tbody td{ display: table-cell !important; }
+  .pdf-table tbody td::before{ content: none !important; }
+  .pdf-table{ border-spacing: 0 10px; }
+
+  /* Fuerza tabla también en pantallas angostas */
+  @media (max-width: 860px){
+    .pdf-table thead{ display: table-header-group !important; }
+    .pdf-table tbody tr{ display: table-row !important; }
+    .pdf-table tbody td{ display: table-cell !important; width:auto !important; }
+    .pdf-table tbody td::before{ content:none !important; }
+  }
+  @media print {
+    .no-print { display:none !important; }
+    body { background:#fff; }
+    .container { max-width:none; }
+    .card { box-shadow:none; border:none; }
+
+    /* En impresión: tabla tradicional */
+    .pdf-table{ border-collapse: separate; border-spacing: 0 8px; }
+    .pdf-table thead{ display: table-header-group !important; }
+    .pdf-table tbody tr{ display: table-row !important; }
+    .pdf-table tbody td{ display: table-cell !important; }
+    .pdf-table tbody td::before{ content:none !important; }
+  }
+</style>
+
+<main class="container">
+  <section class="card">
+    <div class="print-header">
+      <div style="flex:1">
+        <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:12px;">
+          <div>
+            <div class="small" style="font-weight:700; letter-spacing:.2px;">KM 325 S.R.L.</div>
+            <h1 id="titulo" style="margin-top:6px;">Novedades del mes</h1>
+            <div class="small" id="fecha-emision" style="margin-top:4px;">Fecha de emisión: —</div>
+          </div>
+          <div style="min-width:120px; display:flex; justify-content:flex-end;">
+            <img src="/img/logo-gulf.png" alt="Gulf" style="height:44px; width:auto; object-fit:contain;" />
+          </div>
+        </div>
+      </div>
+      <div class="no-print print-actions">
+        <div class="field">
+          <label>Mes</label>
+          <input type="month" id="mes" />
+        </div>
+        <button class="btn primary" id="btn-cargar" type="button">Cargar</button>
+        <button class="btn" id="btn-imprimir" type="button">Imprimir / Guardar PDF</button>
+        <a class="btn ghost" href="/liquidacion">Volver</a>
+      </div>
+    </div>
+
+    <div class="notice" id="msg" style="margin-top:10px">Listo.</div>
+    <hr class="sep" />
+
+    <div class="table-wrap">
+      <table class="pdf-table">
+        <thead>
+          <tr class="thead-blue">
+            <th>Legajo</th>
+            <th>Apellido y nombre</th>
+            <th>Días</th>
+            <th>Noches</th>
+            <th>Feriados</th>
+            <th>Presentismo</th>
+            <th>Faltantes</th>
+            <th>Adelantos</th>
+          </tr>
+        </thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+
+    <!-- Nota: en el PDF final no mostramos aclaraciones internas -->
+  </section>
+</main>
+
+<script src="/liquidacion-print.js"></script>
+<%- include('../partials/document-end') %>

@@ -1,0 +1,18 @@
+<header class="topbar">
+  <div class="brand">
+    <img src="/img/logo-gulf.png" alt="Logo" onerror="this.style.display='none'" />
+    <div class="title">
+      <strong>KM325</strong>
+      <span><%= subtitle || 'Sistema de gestión' %></span>
+    </div>
+  </div>
+
+  <nav class="nav">
+    <% if (topbarMode === 'home') { %>
+      <a class="nav-btn active" href="/">Inicio</a>
+    <% } else { %>
+      <a class="nav-btn" href="/">Inicio</a>
+      <button type="button" class="nav-btn secundario" onclick="history.back()">Volver</button>
+    <% } %>
+  </nav>
+</header>

@@ -1,0 +1,66 @@
+<%- include('../partials/document-start', { pageTitle }) %>
+<%- include('../partials/topbar', { topbarMode, subtitle: 'Gestión RRHH' }) %>
+
+<main class="container">
+  <section class="card">
+    <h1>Liquidación (mensual)</h1>
+    <p>
+      Resumen global por empleado: <strong>días trabajados</strong>, <strong>noches (turnos)</strong> y <strong>feriados trabajados</strong>.
+      Incluye tardanzas (auto + editable), presentismo y ajuste por arqueos (solo faltante).
+    </p>
+
+    <div class="row" style="align-items:flex-end; gap:12px; flex-wrap:wrap">
+      <div class="field">
+        <label>Mes</label>
+        <input type="month" id="mes" />
+      </div>
+      <div class="field" style="min-width:240px">
+        <label>Filtrar por apellido</label>
+        <input type="text" id="filter-apellido" placeholder="Ej: Albornoz" />
+      </div>
+      <button class="btn primary" id="btn-cargar" type="button">Cargar resumen</button>
+      <button class="btn ghost" id="btn-recalcular" type="button">Recalcular tardanzas (auto)</button>
+      <a class="btn" id="btn-tardanzas" href="/liquidacion/tardanzas">Editar tardanzas</a>
+      <a class="btn" id="btn-escalas" href="/liquidacion/escalas">Escalas</a>
+      <a class="btn" id="btn-print" href="/liquidacion/print" target="_blank">Imprimir / PDF</a>
+      <div class="notice" id="msg" style="flex:1; min-width:260px">Listo.</div>
+    </div>
+
+    <hr class="sep" />
+
+    <div class="table-wrap">
+      <table class="table-liquidacion">
+        <thead>
+          <tr class="thead-blue">
+            <th>Legajo</th>
+            <th>Nombre</th>
+            <th>Días</th>
+            <th>Francos</th>
+            <th>Noches</th>
+            <th>Feriados</th>
+            <th>Tardanzas</th>
+            <th>Presentismo</th>
+            <th>$ Nocturnidad</th>
+            <th>$ Prem. Asistencia</th>
+            <th>$ Manejo fondos</th>
+            <th>$ Ajuste arqueo</th>
+            <th>$ Adelantos</th>
+            <th>Recibo</th>
+          </tr>
+        </thead>
+        <tbody id="tbody"></tbody>
+        <tfoot>
+          <tr id="tfoot-totales"></tr>
+        </tfoot>
+      </table>
+    </div>
+
+    <p class="small" style="margin-top:10px">
+      Regla presentismo: tolerancia 10 min; <strong>3 tardanzas</strong> (días con tardanza &gt; 10) =&gt; pierde premio. Nocturnidad: <strong>25%</strong> sobre valor hora (básico + antigüedad) / 200, por turno (8h).
+    </p>
+  </section>
+</main>
+
+<%- include('../partials/footer') %>
+<script src="/liquidacion.js"></script>
+<%- include('../partials/document-end') %>

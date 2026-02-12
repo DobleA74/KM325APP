@@ -1,0 +1,60 @@
+<%- include('../partials/document-start', { pageTitle }) %>
+<%- include('../partials/topbar', { topbarMode, subtitle: 'Gestión RRHH' }) %>
+
+<main class="container">
+  <section class="card">
+    <h1>Tardanzas (automático + editable)</h1>
+    <p>
+      El sistema calcula las tardanzas comparando la <strong>entrada tomada</strong> contra el <strong>inicio de turno esperado</strong>
+      (Playero/a: 05–13/13–21/21–05, Cajero/a y Auxiliar de playa: 06–14/14–22) con <strong>tolerancia de 10 minutos</strong>.
+      Podés editar la tardanza final y dejar motivo.
+    </p>
+
+    <div class="row" style="align-items:flex-end; gap:12px; flex-wrap:wrap">
+      <div class="field">
+        <label>Mes</label>
+        <input type="month" id="mes" />
+      </div>
+      <div class="field">
+        <label>Puesto</label>
+        <select id="puesto">
+          <option value="">Todos</option>
+        </select>
+      </div>
+      <button class="btn primary" id="btn-recalcular" type="button">Recalcular (auto)</button>
+      <button class="btn" id="btn-cargar" type="button">Cargar</button>
+      <a class="btn ghost" href="/liquidacion">Volver al resumen</a>
+      <div class="notice" id="msg" style="flex:1; min-width:260px">Listo.</div>
+    </div>
+
+    <hr class="sep" />
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr class="thead-blue">
+            <th>Fecha</th>
+            <th>Legajo</th>
+            <th>Puesto</th>
+            <th>Turno</th>
+            <th>Entrada tomada</th>
+            <th>Inicio esperado</th>
+            <th>Minutos auto</th>
+            <th>Minutos final (editable)</th>
+            <th>Motivo</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+
+    <p class="small" style="margin-top:10px">
+      Tip: dejá <em>Minutos final</em> vacío para volver a usar el valor automático.
+    </p>
+  </section>
+</main>
+
+<%- include('../partials/footer') %>
+<script src="/liquidacion-tardanzas.js"></script>
+<%- include('../partials/document-end') %>

@@ -1,0 +1,120 @@
+<%- include('../partials/document-start', { pageTitle }) %>
+<%- include('../partials/topbar', { topbarMode, subtitle: 'Gestión RRHH' }) %>
+
+<main class="container">
+      <section class="card">
+        <h1>Arqueos (día vencido)</h1>
+        <p>
+          Cargá el faltante/sobrante por <strong>sector + turno</strong> y el sistema propone el reparto
+          según minutos trabajados. Podés ajustar montos manualmente antes de confirmar.
+        </p>
+
+        <div class="row" style="align-items:flex-end; gap:12px; flex-wrap:wrap">
+          <div class="field">
+            <label>Fecha (día a liquidar)</label>
+            <input type="date" id="fecha" />
+          </div>
+          <button class="btn primary" id="btn-calcular" type="button">Guardar y calcular</button>
+          <button class="btn ghost" id="btn-cargar" type="button">Cargar guardado</button>
+          <div class="notice" id="msg" style="flex:1; min-width:260px">Listo.</div>
+        </div>
+
+        <hr class="sep" />
+
+        <div class="grid2">
+          <section class="card" style="margin:0">
+            <h2 style="margin:0 0 10px">Playa</h2>
+            <div class="row" style="gap:10px; flex-wrap:wrap">
+              <div class="field" style="min-width:220px">
+                <label>Mañana (05–13)</label>
+                <input type="number" step="0.01" id="playa_manana" placeholder="0" />
+              </div>
+              <div class="field" style="min-width:220px">
+                <label>Tarde (13–21)</label>
+                <input type="number" step="0.01" id="playa_tarde" placeholder="0" />
+              </div>
+              <div class="field" style="min-width:220px">
+                <label>Noche (21–05)</label>
+                <input type="number" step="0.01" id="playa_noche" placeholder="0" />
+              </div>
+            </div>
+            <div class="field">
+              <label>Observaciones (opcional)</label>
+              <input type="text" id="playa_obs" placeholder="Ej: diferencia por billetes, cierre, etc." />
+            </div>
+          </section>
+
+          <section class="card" style="margin:0">
+            <h2 style="margin:0 0 10px">Shop</h2>
+            <div class="row" style="gap:10px; flex-wrap:wrap">
+              <div class="field" style="min-width:220px">
+                <label>Mañana (06–14)</label>
+                <input type="number" step="0.01" id="shop_manana" placeholder="0" />
+              </div>
+              <div class="field" style="min-width:220px">
+                <label>Tarde (14–22)</label>
+                <input type="number" step="0.01" id="shop_tarde" placeholder="0" />
+              </div>
+            </div>
+            <div class="field">
+              <label>Observaciones (opcional)</label>
+              <input type="text" id="shop_obs" placeholder="Ej: diferencia por posnet, vuelto, etc." />
+            </div>
+          </section>
+        </div>
+
+        <hr class="sep" />
+
+        <div id="export-area">
+        <h2>Propuesta de reparto (editable)</h2>
+
+        <div class="table-wrap" style="margin:10px 0">
+          <table>
+            <thead>
+              <tr class="thead-blue">
+                <th>Sector</th>
+                <th>Turno</th>
+                <th>Monto turno</th>
+                <th>Total asignado</th>
+                <th>Diferencia</th>
+              </tr>
+            </thead>
+            <tbody id="tbody-totales"></tbody>
+          </table>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr class="thead-blue">
+                <th>Sector</th>
+                <th>Turno</th>
+                <th>Legajo</th>
+                <th>Nombre</th>
+                <th>Puesto</th>
+                <th>Minutos</th>
+                <th>$ Propuesto</th>
+                <th>$ Final (editable)</th>
+              </tr>
+            </thead>
+            <tbody id="tbody-propuestas"></tbody>
+          </table>
+        </div>
+
+        <div class="row" style="margin-top:10px; gap:10px; justify-content:flex-end; flex-wrap:wrap">
+          <button class="btn" id="btn-export" type="button" style="display:none">Exportar PNG</button>
+          <button class="btn primary" id="btn-confirmar" type="button" disabled>Confirmar asignaciones</button>
+        </div>
+
+        <p class="small" style="margin-top:10px">
+          Nota: se proponen participaciones según asistencias del día y los puestos del sector (Playa: Playero/A, Auxiliar de Playa; Shop: Cajero/A, Auxiliar de Caja).
+        </p>
+        </div>
+      </section>
+    </main>
+
+<%- include('../partials/footer') %>
+
+<script src="/arqueos.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+<%- include('../partials/document-end') %>

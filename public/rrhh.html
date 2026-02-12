@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>KM325 RRHH – Módulo</title>
+    <link rel="stylesheet" href="app.css" />
+    <link rel="icon" href="favicon.png" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <img src="img/logo-gulf.png" alt="Logo" onerror="this.style.display='none'" />
+        <div class="title">
+          <strong>KM325</strong>
+          <span>Gestión RRHH</span>
+        </div>
+      </div>
+      <nav class="nav">
+        <a href="/index.html">Inicio</a>
+        <a class="active" href="/rrhh.html">RRHH</a>
+      </nav>
+    </header>
+
+    <main class="container">
+      <section class="card">
+        <h1>Módulo RRHH</h1>
+        <p>Elegí qué querés gestionar.</p>
+
+        <div class="grid2" style="gap:12px">
+          <a class="card" href="/asistencias-menu.html" style="text-decoration:none; color:inherit">
+            <h2 style="margin-top:0">Asistencias</h2>
+            <p class="small">Carga diaria, jornadas abiertas y gestión de asistencias.</p>
+          </a>
+          <a class="card" href="/abm-empleados.html" style="text-decoration:none; color:inherit">
+            <h2 style="margin-top:0">ABM Empleados</h2>
+            <p class="small">Altas, bajas y modificaciones de empleados.</p>
+          </a>
+          <a class="card" href="/arqueos.html" style="text-decoration:none; color:inherit">
+            <h2 style="margin-top:0">Arqueos</h2>
+            <p class="small">Carga de faltantes/sobrantes por turno (día vencido) y reparto editable.</p>
+          </a>
+        </div>
+      </section>
+    </main>
+    <script src="/auth.js"></script>
+<script>
+  ensureAuth();
+</script>
+
+  </body>
+</html>

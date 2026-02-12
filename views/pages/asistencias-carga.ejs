@@ -1,0 +1,77 @@
+<%- include('../partials/document-start', { pageTitle }) %>
+<%- include('../partials/topbar', { topbarMode, subtitle: 'Gestión RRHH' }) %>
+
+<main class="container">
+  <section class="card">
+    <h1>Importar archivo Excel</h1>
+    <p>
+      Subí el .xlsx de fichadas. Ajustá entradas/salidas y confirmá para
+      guardar (sin duplicados).
+    </p>
+
+    <form id="form-excel" class="row">
+      <div class="field">
+        <label>Archivo</label>
+        <input type="file" id="archivo" accept=".xlsx" required />
+      </div>
+      <button class="btn primary" type="submit">Subir archivo</button>
+      <button class="btn ghost" id="btn-confirmar" type="button" disabled>
+        Confirmar y guardar
+      </button>
+    </form>
+
+    <div class="notice" id="resumen">Listo.</div>
+
+    <hr class="sep" />
+
+    <div class="table-wrap">
+      <table id="tabla">
+        <thead>
+          <tr class="thead-blue">
+            <th class="sortable" data-order="id">ID</th>
+            <th class="sortable" data-order="fecha">Fecha entrada</th>
+            <th class="sortable" data-order="fecha_salida">Fecha salida</th>
+            <th class="sortable" data-order="legajo">Legajo</th>
+            <th class="sortable" data-order="nombre">Nombre</th>
+            <th class="sortable" data-order="sector">Sector</th>
+            <th class="sortable" data-order="puesto">Puesto</th>
+            <th class="sortable" data-order="entrada">Entrada</th>
+            <th class="sortable" data-order="salida">Salida</th>
+            <th class="sortable" data-order="horas">Horas</th>
+            <th class="sortable" data-order="nocturnas">Nocturnas</th>
+            <th>Acciones</th>
+          </tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+
+    <p class="small" style="margin-top: 10px">
+      Tip: Si un turno noche queda “abierto”, no se guarda hasta completar
+      salida/fecha salida (se gestiona en “Jornadas Abiertas”).
+    </p>
+  </section>
+</main>
+
+
+<!-- Modal: Falta de fichada detectada -->
+<div class="modal" id="modal-falta-fichada">
+  <div class="modal-card">
+    <h2>⚠️ Fichada incompleta o ausente</h2>
+    <p class="small">Se detectaron empleados programados según calendario sin fichadas registradas. Podés regularizar cargando o editando la fichada manualmente (por ejemplo, olvido de marcar).</p>
+
+    <div id="falta-fichada-list" style="margin-top:10px"></div>
+
+    <div class="modal-actions">
+      <button class="btn ghost" id="btn-falta-cerrar" type="button">Cerrar</button>
+      <button class="btn" id="btn-falta-rrhh" type="button">Marcar como ausencia (RRHH)</button>
+      <button class="btn primary" id="btn-falta-regularizar" type="button">Regularizar fichada</button>
+    </div>
+  </div>
+</div>
+
+<%- include('../partials/footer') %>
+
+<script src="/sortable.js"></script>
+<script src="/importar.js"></script>
+<%- include('../partials/document-end') %>

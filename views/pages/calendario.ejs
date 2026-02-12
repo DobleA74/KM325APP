@@ -1,0 +1,225 @@
+<%- include('../partials/document-start', { pageTitle: (typeof pageTitle !== 'undefined' && pageTitle) ? pageTitle : 'Calendario' }) %>
+<%- include('../partials/topbar', { topbarMode: (typeof topbarMode !== 'undefined' && topbarMode) ? topbarMode : 'rrhh', subtitle: 'Gestión RRHH' }) %>
+
+  <main class="container">
+    <header class="page-header">
+      <h1>Calendario de turnos</h1>
+      <p class="muted">Patrón por empleado + excepciones (vacaciones/licencias/cambios).</p>
+    </header>
+
+    <section class="card">
+      <div style="display:flex; gap:12px; flex-wrap:wrap;">
+        <div class="field">
+          <label for="c_empleado">Empleado</label>
+          <select id="c_empleado"></select>
+        </div>
+
+        <div class="field">
+          <label for="c_desde">Desde</label>
+          <input type="date" id="c_desde" />
+        </div>
+
+        <div class="field">
+          <label for="c_hasta">Hasta</label>
+          <input type="date" id="c_hasta" />
+        </div>
+
+        <div class="field">
+          <label>&nbsp;</label>
+          <button class="btn btn-primary" id="btn_cargar">Cargar</button>
+        </div>
+      </div>
+
+      <div class="divider"></div>
+
+      <div style="display:flex; gap:12px; flex-wrap:wrap;">
+        <div class="field">
+          <label for="c_patron">Patrón (override del empleado)</label>
+          <select id="c_patron"></select>
+        </div>
+
+        <div class="field">
+          <label for="c_inicio_patron">Inicio del patrón</label>
+          <input type="date" id="c_inicio_patron" />
+        </div>
+
+        <div class="field">
+          <label>&nbsp;</label>
+          <button class="btn" id="btn_guardar_patron">Guardar override</button>
+        </div>
+      </div>
+
+      <p class="muted" id="patron_info">&nbsp;</p>
+    </section>
+
+    <section class="card">
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+        <h2 style="margin:0">Configuración avanzada</h2>
+        <button class="btn btn-light" type="button" id="adv_toggle">Mostrar</button>
+      </div>
+
+      <div id="adv_panel" style="display:none; margin-top:12px;">
+        <p class="muted">Horarios por puesto (se usan para inferir turno/horario real en calendario y tardanzas). Los puestos se toman del ABM de empleados; acá solo configurás sus horarios.</p>
+
+        <div class="divider"></div>
+
+        <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end;">
+          <div class="field">
+            <label for="hp_puesto">Puesto</label>
+            <select id="hp_puesto"></select>
+          </div>
+
+          <div class="field">
+            <label for="hp_patron">Patrón por defecto</label>
+            <select id="hp_patron"></select>
+          </div>
+
+          <div class="field">
+            <label for="hp_patron_inicio">Inicio del patrón</label>
+            <input type="date" id="hp_patron_inicio" />
+          </div>
+
+          <div class="field">
+            <label>Mañana</label>
+            <div style="display:flex; gap:8px; align-items:center;">
+              <input type="time" id="hp_m_ini" />
+              <span class="muted">a</span>
+              <input type="time" id="hp_m_fin" />
+            </div>
+          </div>
+
+          <div class="field">
+            <label>Tarde</label>
+            <div style="display:flex; gap:8px; align-items:center;">
+              <input type="time" id="hp_t_ini" />
+              <span class="muted">a</span>
+              <input type="time" id="hp_t_fin" />
+            </div>
+          </div>
+
+          <div class="field">
+            <label>Noche</label>
+            <div style="display:flex; gap:8px; align-items:center;">
+              <input type="time" id="hp_n_ini" />
+              <span class="muted">a</span>
+              <input type="time" id="hp_n_fin" />
+            </div>
+            <small class="muted">Si el fin es menor al inicio, se asume que cruza medianoche.</small>
+          </div>
+
+          <div class="field">
+            <label>&nbsp;</label>
+            <div style="display:flex; gap:8px;">
+              <button class="btn btn-primary" type="button" id="hp_guardar">Guardar</button>
+              <button class="btn btn-danger" type="button" id="hp_borrar">Borrar config</button>
+            </div>
+          </div>
+        </div>
+
+        <p class="muted" id="hp_msg" style="margin-top:10px;">&nbsp;</p>
+
+        <div class="table-wrap">
+          <table class="table" id="hp_tabla">
+            <thead>
+              <tr>
+                <th>Puesto</th>
+                <th>Patrón</th>
+                <th>Mañana</th>
+                <th>Tarde</th>
+                <th>Noche</th>
+              </tr>
+            </thead>
+            <tbody id="hp_body"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="table-wrap">
+        <table class="table" id="tabla_calendario">
+          <thead>
+            <tr>
+              <th>Fecha</th>
+              <th>Puesto</th>
+              <th>Turno</th>
+              <th>Horario</th>
+              <th>Fuente</th>
+              <th>Acciones</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p class="muted" id="cal_msg"></p>
+    </section>
+
+    <!-- Modal Excepción -->
+    <div class="modal" id="modal_ex" aria-hidden="true">
+      <div class="modal-card">
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:12px;">
+          <h3>Excepción</h3>
+          <button class="btn btn-light" id="ex_close">Cerrar</button>
+        </div>
+
+        <div >
+          <div style="display:flex; gap:12px; flex-wrap:wrap;">
+            <div class="field">
+              <label>Legajo</label>
+              <input type="text" id="ex_legajo" readonly />
+            </div>
+            <div class="field">
+              <label>Fecha</label>
+              <input type="date" id="ex_fecha" readonly />
+            </div>
+            <div class="field">
+              <label>Tipo</label>
+              <select id="ex_tipo">
+                <option value="CAMBIO">Cambio (turno / puesto)</option>
+              <option value="FRANCO_EXTRA">Franco</option>
+              <option value="VACACIONES">Vacaciones</option>
+              <option value="LICENCIA">Licencia</option>
+              <option value="ENFERMEDAD">Enfermedad</option>
+              <option value="PERMISO">Permiso</option>
+                <option value="VACACIONES">Vacaciones</option>
+                <option value="LICENCIA">Licencia</option>
+                <option value="PERMISO">Permiso</option>
+                <option value="ENFERMEDAD">Enfermedad</option>
+                <option value="FRANCO_EXTRA">Franco extra</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Puesto (opcional)</label>
+              <select id="ex_puesto"><option value="">(sin cambio)</option></select>
+            </div>
+            <div class="field">
+              <label>Turno (opcional)</label>
+              <select id="ex_turno">
+                <option value="">(sin cambio)</option>
+                <option value="MANIANA">Mañana</option>
+                <option value="TARDE">Tarde</option>
+                <option value="NOCHE">Noche</option>
+                <option value="FRANCO">Franco</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Motivo</label>
+              <input type="text" id="ex_motivo" placeholder="Opcional" />
+            </div>
+          </div>
+        </div>
+
+        <div class="modal-footer">
+          <button class="btn btn-primary" id="ex_guardar">Guardar</button>
+          <button class="btn btn-danger" id="ex_eliminar" style="display:none;">Eliminar</button>
+        </div>
+      </div>
+    </div>
+
+  </main>
+
+<%- include('../partials/footer') %>
+
+<script src="/calendario.js"></script>
+<script src="/horarios-por-puesto.js"></script>
+<%- include('../partials/document-end') %>

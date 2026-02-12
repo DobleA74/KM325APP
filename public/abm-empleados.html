@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>KM325 RRHH – ABM Empleados</title>
+  <link rel="stylesheet" href="app.css" />
+  <link rel="icon" href="favicon.png" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <img src="img/logo-gulf.png" alt="Logo" onerror="this.style.display='none'">
+      <div class="title">
+        <strong>KM325</strong>
+        <span>Gestión RRHH</span>
+      </div>
+    </div>
+    <nav class="nav">
+        <a href="/index.html">Inicio</a>
+        <a class="active" href="/rrhh.html">RRHH</a>
+      </nav>
+  </header>
+
+  <main class="container">
+    <section class="card">
+      <h1>ABM de Empleados</h1>
+      <p>Alta, edición y eliminación de empleados (legajo como clave).</p>
+
+      <div class="row">
+        <div class="field">
+          <label>Legajo</label>
+          <input id="legajo" placeholder="00000001" />
+        </div>
+        <div class="field" style="min-width:260px">
+          <label>Nombre</label>
+          <input id="nombre" placeholder="Apellido, Nombre" />
+        </div>
+        <div class="field">
+          <label>Sector</label>
+          <select id="sector">
+            <option value="">-- Seleccionar --</option>
+            <option value="PLAYA">PLAYA</option>
+            <option value="SHOP">SHOP</option>
+            <option value="ADMINISTRACIÓN">ADMINISTRACIÓN</option>
+          </select>
+        </div>
+        <div class="field" style="min-width:240px">
+          <label>Puesto</label>
+          <select id="puesto">
+  <option value="">Seleccionar puesto</option>
+</select>
+        </div>
+
+        <button class="btn primary" id="btn-guardar">Guardar / Actualizar</button>
+      </div>
+
+      <hr class="sep" />
+
+<div class="table-wrap">
+  <table id="tabla-empleados">
+    <thead>
+      <tr class="thead-blue">
+        <th class="sortable" data-order="legajo">Legajo</th>
+        <th class="sortable" data-order="nombre">Nombre</th>
+        <th class="sortable" data-order="sector">Sector</th>
+        <th class="sortable" data-order="puesto">Puesto</th>
+        <th>Acciones</th>
+      </tr>
+    </thead>
+    <tbody id="empleados-body"></tbody>
+  </table>
+</div>
+
+
+      </div>
+
+      <div class="notice" id="msg">Listo.</div>
+    </section>
+  </main>
+
+  <script src="/auth.js"></script>
+<script>
+  ensureAuth();
+</script>
+
+    <script src="sortable.js"></script>
+<script src="empleados.js"></script>
+
+</body>
+</html>

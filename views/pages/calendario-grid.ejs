@@ -1,0 +1,106 @@
+<%- include('../partials/document-start', { pageTitle: (typeof pageTitle !== 'undefined' && pageTitle) ? pageTitle : 'Calendario (grilla)' }) %>
+<%- include('../partials/topbar', { topbarMode: (typeof topbarMode !== 'undefined' && topbarMode) ? topbarMode : 'rrhh', subtitle: 'Gestión RRHH' }) %>
+
+<main class="container">
+  <h1 style="margin-top:18px;">Calendario (grilla)</h1>
+  <p style="color:#6b7280; margin-bottom:16px;">
+    Vista mensual tipo Excel por sector (PLAYA / SHOP). Celdas vacías cuando no hay asignación.
+  </p>
+
+  <div style="display:flex; gap:12px; align-items:end; flex-wrap:wrap; margin-bottom:16px;">
+    <div>
+      <label style="display:block; font-size:12px; color:#6b7280;">Mes</label>
+      <input id="mes" type="month" />
+    </div>
+
+    <div>
+      <label style="display:block; font-size:12px; color:#6b7280;">Sector</label>
+      <select id="sector">
+        <option value="TODOS">Todos</option>
+        <option value="PLAYA">Playa</option>
+        <option value="MINI">Shop/Mini</option>
+      </select>
+    </div>
+
+    <button id="btnCargar" class="btn btn-primary">Cargar</button>
+  </div>
+
+  <div id="estado" style="margin:10px 0; color:#6b7280;"></div>
+  <div id="grid"></div>
+</main>
+
+<script src="/calendario-grid.js"></script>
+
+
+<div id="modalExGrid" class="modal">
+  <div class="modal-card">
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:12px;">
+      <div>
+        <div style="font-size:18px; font-weight:800;">Editar día (excepción)</div>
+        <div id="exGridSub" class="muted" style="margin-top:4px;"></div>
+      </div>
+      <button id="exGridClose" class="btn btn-light">Cerrar</button>
+    </div>
+
+    <div style="display:flex; gap:12px; flex-wrap:wrap;">
+      <div class="field" style="min-width:140px;">
+        <label>Legajo</label>
+        <input id="ex_legajo" placeholder="Legajo..." inputmode="numeric" />
+      </div>
+
+      <div class="field" style="min-width:220px; flex:1;">
+        <label>Empleado</label>
+        <input id="ex_emp" list="ex_emp_list" placeholder="Buscar empleado (legajo o nombre)..." />
+        <datalist id="ex_emp_list"></datalist>
+      </div>
+
+      <div class="field" style="min-width:160px;">
+        <label>Fecha</label>
+        <input id="ex_fecha" type="date" disabled />
+      </div>
+
+      <div class="field" style="min-width:220px;">
+        <label>Tipo</label>
+        <select id="ex_tipo">
+          <option value="CAMBIO">Cambio (turno / puesto)</option>
+          <option value="FRANCO_EXTRA">Franco</option>
+          <option value="VACACIONES">Vacaciones</option>
+          <option value="LICENCIA">Licencia</option>
+          <option value="ENFERMEDAD">Enfermedad</option>
+              <option value="FALTA_FICHADA">Falta de fichada</option>
+          <option value="PERMISO">Permiso</option>
+        </select>
+      </div>
+
+      <div class="field" style="min-width:220px; flex:1;">
+        <label>Puesto (opcional)</label>
+        <select id="ex_puesto"><option value="">(sin cambio)</option></select>
+      </div>
+
+      <div class="field" style="min-width:220px;">
+        <label>Turno (opcional)</label>
+        <select id="ex_turno">
+          <option value="">(sin cambio)</option>
+          <option value="MANIANA">Mañana</option>
+          <option value="TARDE">Tarde</option>
+          <option value="NOCHE">Noche</option>
+          <option value="FRANCO">Franco</option>
+        </select>
+      </div>
+
+      <div class="field" style="min-width:320px; flex:1;">
+        <label>Motivo (opcional)</label>
+        <input id="ex_motivo" placeholder="Vacaciones / reemplazo / etc." />
+      </div>
+    </div>
+
+    <div class="modal-actions">
+      <button id="exGridDelete" class="btn btn-light" style="margin-right:auto; display:none;">Eliminar excepción</button>
+      <button id="exGridSave" class="btn btn-primary">Guardar</button>
+    </div>
+  </div>
+</div>
+
+
+<%- include('../partials/footer') %>
+<%- include('../partials/document-end') %>

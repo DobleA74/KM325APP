@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>KM325 – Inicio</title>
+    <link rel="stylesheet" href="app.css" />
+    <link rel="icon" href="favicon.png" />
+  </head>
+  <body class="home">
+    <header class="topbar">
+      <div class="brand">
+        <img src="img/logo-gulf.png" alt="Logo" onerror="this.style.display='none'" />
+        <div class="title">
+          <strong>KM325</strong>
+          <span>Sistema de gestión</span>
+        </div>
+      </div>
+      <nav class="nav">
+        <a class="active" href="/index.html">Inicio</a>
+      </nav>
+    </header>
+
+    <main class="home-hero">
+      <div class="home-hero__bg" aria-hidden="true"></div>
+      <div class="home-hero__overlay" aria-hidden="true"></div>
+
+      <section class="home-hero__content">
+        <h1>Bienvenido/a</h1>
+        <p>Ingresá al módulo de Gestión de RRHH.</p>
+
+        <div class="home-hero__actions">
+          <a class="btn primary" href="/rrhh.html">Gestión RRHH</a>
+          <span class="home-hero__hint">Próximamente: tablero con últimos movimientos y novedades.</span>
+        </div>
+
+        <div class="home-hero__cards" aria-hidden="true">
+          <div class="home-mini-card">
+            <div class="home-mini-card__title">Últimos arqueos</div>
+            <div class="home-mini-card__value">—</div>
+          </div>
+          <div class="home-mini-card">
+            <div class="home-mini-card__title">Asistencias del día</div>
+            <div class="home-mini-card__value">—</div>
+          </div>
+          <div class="home-mini-card">
+            <div class="home-mini-card__title">Novedades</div>
+            <div class="home-mini-card__value">—</div>
+          </div>
+        </div>
+      </section>
+    </main>
+    <script src="/auth.js"></script>
+<script>
+  ensureAuth();
+</script>
+
+  </body>
+</html>

@@ -1,0 +1,178 @@
+<%- include('../partials/document-start', { pageTitle }) %>
+<%- include('../partials/topbar', { topbarMode, subtitle: 'Gestión RRHH' }) %>
+
+<main class="wrap">
+      <section class="card">
+        <h1>Jornadas abiertas</h1>
+        <p class="muted">
+          Turnos noche pendientes o casos donde faltó fichar entrada/salida.
+          Podés editar y cerrar manualmente.
+        </p>
+
+        <!-- Barra de estado -->
+        <div class="statusbar">
+          <div id="status" class="status-left">Listo.</div>
+          <div class="status-right">
+            <button class="btn secondary" id="btn-refresh" type="button">
+              Refrescar
+            </button>
+          </div>
+        </div>
+
+        <h3 style="margin-top: 18px">Agregar abierta manual</h3>
+
+        <div class="grid">
+          <div>
+            <label>Legajo</label>
+            <input id="m_legajo" placeholder="00000001" />
+          </div>
+          <div>
+            <label>Nombre</label>
+            <input id="m_nombre" placeholder="Apellido, Nombre" />
+          </div>
+          <div>
+            <label>Sector</label>
+            <select id="m_sector">
+              <option value="">-- Seleccionar --</option>
+              <option value="PLAYA">PLAYA</option>
+              <option value="MINI">MINI</option>
+              <option value="ADMINISTRACIÓN">ADMINISTRACIÓN</option>
+            </select>
+          </div>
+          <div>
+            <label>Puesto</label>
+            <select id="m_puesto" disabled>
+              <option value="">-- Seleccionar sector primero --</option>
+            </select>
+          </div>
+          <div>
+            <label>Fecha entrada</label>
+            <input id="m_fecha_entrada" type="date" />
+          </div>
+          <div>
+            <label>Hora entrada</label>
+            <input id="m_entrada" type="time" />
+          </div>
+
+          <div class="grid-actions">
+            <button class="btn primary" id="btn-crear" type="button">
+              Crear
+            </button>
+          </div>
+        </div>
+
+        <p class="tip">
+          Tip: si se olvidó marcar entrada, dejá “Hora entrada” vacía y lo
+          completás al cerrar.
+        </p>
+
+        <div class="table-wrap" style="margin-top: 14px">
+          <table id="tabla-abiertas">
+            <thead>
+              <tr class="thead-blue">
+                <th class="sortable" data-order="id">ID</th>
+                <th class="sortable" data-order="legajo">Legajo</th>
+                <th class="sortable" data-order="nombre">Nombre</th>
+                <th class="sortable" data-order="sector">Sector</th>
+                <th class="sortable" data-order="puesto">Puesto</th>
+                <th class="sortable" data-order="fecha_entrada">
+                  Fecha entrada
+                </th>
+                <th class="sortable" data-order="entrada">Entrada</th>
+                <th>Acciones</th>
+              </tr>
+            </thead>
+            <tbody id="rows"></tbody>
+          </table>
+        </div>
+
+        <button id="btn-refresh" type="button">Actualizar</button>
+        <div id="status"></div>
+
+        <!-- Modal editar -->
+        <div id="modal-edit" class="modal">
+          <div class="modal-card">
+            <h3>Editar Jornada Abierta</h3>
+
+            <input id="e_id" type="hidden" />
+            <div class="grid">
+              <label>Legajo<input id="e_legajo" disabled /></label>
+              <label>Nombre<input id="e_nombre" /></label>
+              <label>Sector<input id="e_sector" /></label>
+              <label>Puesto<input id="e_puesto" /></label>
+              <label
+                >Fecha entrada<input id="e_fecha_entrada" type="date"
+              /></label>
+              <label>Hora entrada<input id="e_entrada" type="time" /></label>
+            </div>
+
+            <div class="modal-actions">
+              <button class="btn" id="e_cancelar" type="button">
+                Cancelar
+              </button>
+              <button class="btn primary" id="e_guardar" type="button">
+                Guardar
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Modal cerrar -->
+        <div id="modal-cerrar" class="modal">
+          <div class="modal-card">
+            <h3>Cerrar Jornada Abierta</h3>
+
+            <input id="c_id" type="hidden" />
+            <label>Legajo<input id="c_legajo" disabled /></label>
+
+            <label>Horario registrado (pendiente)<input id="c_existente" disabled /></label>
+
+            <div style="display:flex; gap:14px; align-items:center; flex-wrap:wrap; margin:10px 0 2px;">
+              <label style="display:flex; gap:8px; align-items:center; font-weight:700;">
+                <input type="radio" name="c_tipo" id="c_tipo_entrada" value="entrada" checked />
+                Es <span style="color: var(--gulf-orange);">ENTRADA</span>
+              </label>
+              <label style="display:flex; gap:8px; align-items:center; font-weight:700;">
+                <input type="radio" name="c_tipo" id="c_tipo_salida" value="salida" />
+                Es <span style="color: var(--gulf-blue);">SALIDA</span>
+              </label>
+              <div class="small" style="opacity:.9;">
+                Elegí qué representa el horario registrado y completá el horario faltante.
+              </div>
+            </div>
+
+            <label>Fecha salida<input id="c_fecha_salida" type="date" /></label>
+
+            <!-- Cuando el horario registrado es ENTRADA, completás SALIDA -->
+            <label id="c_grp_salida">Hora salida<input id="c_salida" type="time" /></label>
+
+            <!-- Cuando el horario registrado es SALIDA, completás ENTRADA -->
+            <label id="c_grp_entrada" style="display:none;">Hora entrada<input id="c_entrada" type="time" /></label>
+
+            <div class="modal-actions">
+              <button class="btn" id="c_cancelar" type="button">
+                Cancelar
+              </button>
+              <button class="btn secondary" id="c_confirmar" type="button">
+                Cerrar
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="notice">
+          <strong>Guardar:</strong> conserva los cambios sin cerrar la
+          jornada.<br />
+          <strong>Cerrar:</strong> genera la asistencia definitiva (horas y
+          nocturnas) y elimina la jornada abierta.<br />
+          <strong>🗑 Eliminar:</strong> borra la jornada abierta sin generar
+          asistencia.
+        </div>
+      </section>
+    </main>
+
+<%- include('../partials/footer') %>
+
+<script src="/sortable.js"></script>
+<script src="/abiertas.js"></script>
+<%- include('../partials/document-end') %>

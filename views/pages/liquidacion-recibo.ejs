@@ -1,0 +1,61 @@
+<%- include('../partials/document-start', { pageTitle, bodyClass }) %>
+<%- include('../partials/topbar', { topbarMode, subtitle: 'Gestión RRHH' }) %>
+
+<main class="container">
+  <section class="card" id="recibo">
+    <div class="row" style="justify-content:space-between; align-items:flex-start; gap:12px; flex-wrap:wrap">
+      <div>
+        <h1 style="margin:0">Recibo (vista para PDF)</h1>
+        <p class="small" id="recibo-sub" style="margin:6px 0 0">—</p>
+      </div>
+      <div class="row" style="gap:8px">
+        <button class="btn primary" id="btn-print" type="button">Imprimir / PDF</button>
+      </div>
+    </div>
+
+    <hr class="sep" />
+
+    <div id="recibo-msg" class="notice">Cargando...</div>
+
+    <div id="recibo-body" style="display:none">
+      <h2 style="margin-top:0">Resumen</h2>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr class="thead-blue">
+              <th>Concepto</th>
+              <th style="text-align:right">Monto</th>
+            </tr>
+          </thead>
+          <tbody id="tbody-conceptos"></tbody>
+          <tfoot>
+            <tr id="tfoot-total"></tr>
+          </tfoot>
+        </table>
+      </div>
+
+      <h2>Arqueos (detalle del mes)</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr class="thead-blue">
+              <th>Fecha</th>
+              <th>Sector</th>
+              <th>Turno</th>
+              <th style="text-align:right">$ Turno</th>
+              <th style="text-align:right">$ Empleado</th>
+            </tr>
+          </thead>
+          <tbody id="tbody-arqueos"></tbody>
+        </table>
+      </div>
+
+      <p class="small" style="margin-top:10px">Sugerencia: usá el botón <strong>Imprimir / PDF</strong> y elegí “Guardar como PDF”.</p>
+    </div>
+  </section>
+</main>
+
+<%- include('../partials/footer') %>
+<script src="/liquidacion-recibo.js"></script>
+<%- include('../partials/document-end') %>
