@@ -1,5 +1,6 @@
 {
 <<<<<<< HEAD
+<<<<<<< HEAD
   "name": "km325-rrhh",
   "version": "1.0.0",
   "private": true,
@@ -16,6 +17,8 @@
   }
 }
 =======
+=======
+>>>>>>> master
   "name": "km325-backend",
   "version": "1.0.0",
   "main": "server.js",
@@ -33,4 +36,7 @@
     "xlsx": "^0.18.5"
   }
 }
+<<<<<<< HEAD
+>>>>>>> master
+=======
 >>>>>>> master

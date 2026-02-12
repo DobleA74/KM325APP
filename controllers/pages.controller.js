@@ -55,8 +55,6 @@ exports.arqueos = (req, res) => {
     topbarMode: 'internal',
   });
 };
-<<<<<<< HEAD
-=======
 exports.apiArqueos = async (req, res) => {
   try {
     const fecha = req.query.fecha;
@@ -85,7 +83,6 @@ exports.apiArqueos = async (req, res) => {
     res.status(500).json({ error: "Error interno" });
   }
 };
->>>>>>> master
 
 // Calendario
 // /calendario -> grilla mensual tipo Excel (PLAYA / SHOP)
@@ -133,8 +130,6 @@ exports.liquidacionPrint = (req, res) => {
     bodyClass: 'no-table-cards',
   });
 };
-<<<<<<< HEAD
-=======
 
 // Recibo individual (para exportar PDF desde el navegador)
 exports.liquidacionRecibo = (req, res) => {
@@ -144,4 +139,3 @@ exports.liquidacionRecibo = (req, res) => {
     bodyClass: 'no-table-cards',
   });
 };
->>>>>>> master

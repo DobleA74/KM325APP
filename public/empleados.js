@@ -1,13 +1,23 @@
 console.log("✅ empleados.js cargado");
 
+<<<<<<< HEAD
+=======
+ensureAuth();
+
+>>>>>>> master
 const $ = (id) => document.getElementById(id);
 
 const legajo = $("legajo");
 const nombre = $("nombre");
 const sector = $("sector");
 const puesto = $("puesto");
+<<<<<<< HEAD
 const categoria = $("categoria");
 const fechaIngreso = $("fecha_ingreso");
+=======
+const categoria = $("categoria") || { value: "" };
+const fechaIngreso = $("fecha_ingreso") || { value: "" };
+>>>>>>> master
 const btnGuardar = $("btn-guardar");
 const tbody = $("empleados-body");
 const msg = $("msg");
@@ -99,13 +109,21 @@ function render() {
       const l = b.dataset.del;
       if (!confirm(`Eliminar legajo ${l}?`)) return;
 
+<<<<<<< HEAD
       const res = await fetch(`/api/empleados/${encodeURIComponent(l)}`, {
+=======
+      const res = await authFetch(`/api/empleados/${encodeURIComponent(l)}`, {
+>>>>>>> master
         method: "DELETE",
       });
       if (!res.ok) return alert("No se pudo eliminar");
 
       msg.textContent = `Eliminado ${l}`;
+<<<<<<< HEAD
       await cargar();
+=======
+      await cargarSectores().then(cargar);
+>>>>>>> master
     });
   });
 }
@@ -133,7 +151,11 @@ function initSorter() {
 }
 
 async function cargar() {
+<<<<<<< HEAD
   const res = await fetch("/api/empleados");
+=======
+  const res = await authFetch("/api/empleados");
+>>>>>>> master
   rowsCache = (await res.json().catch(() => [])) || [];
 
   initSorter();
@@ -152,7 +174,11 @@ btnGuardar.addEventListener("click", async () => {
   };
   if (!body.legajo) return alert("Falta legajo");
 
+<<<<<<< HEAD
   const res = await fetch("/api/empleados", {
+=======
+  const res = await authFetch("/api/empleados", {
+>>>>>>> master
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -167,7 +193,14 @@ btnGuardar.addEventListener("click", async () => {
   setPuestosBySector("", "");
   categoria.value = "";
   fechaIngreso.value = "";
+<<<<<<< HEAD
   await cargar();
 });
 
 cargar();
+=======
+  await cargarSectores().then(cargar);
+});
+
+cargarSectores().then(cargar);
+>>>>>>> master

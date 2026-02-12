@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>KM325 – Login</title>
+    <link rel="stylesheet" href="app.css" />
+    <style>
+      .login-wrap{max-width:420px;margin:10vh auto;padding:24px;border:1px solid #e5e5e5;border-radius:12px;background:#fff}
+      .login-wrap h1{margin:0 0 6px 0}
+      .login-wrap p{margin:0 0 16px 0;color:#666}
+      .login-wrap .field{display:flex;flex-direction:column;gap:6px;margin:12px 0}
+      .login-wrap input{padding:10px 12px;border:1px solid #ddd;border-radius:10px}
+      .login-wrap .row{display:flex;gap:10px;align-items:center;justify-content:space-between}
+      .login-wrap .msg{margin-top:12px;color:#b00020}
+    </style>
+  </head>
+  <body>
+    <div class="login-wrap">
+      <h1>KM325</h1>
+      <p>Ingresá con tu usuario y contraseña.</p>
+
+      <div class="field">
+        <label>Usuario</label>
+        <input id="username" autocomplete="username" />
+      </div>
+      <div class="field">
+        <label>Contraseña</label>
+        
+    <div class="password-wrap">
+  <input id="password" type="password" placeholder="Contraseña" />
+  <button type="button" id="togglePass" class="toggle-pass" aria-label="Mostrar/Ocultar contraseña">
+    <!-- Eye (tradicional) -->
+    <svg id="eyeIcon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+      <path d="M12 5c5.5 0 9.6 4.2 10.9 6-1.3 1.8-5.4 6-10.9 6S2.4 12.8 1.1 11C2.4 9.2 6.5 5 12 5z" fill="none" stroke="currentColor" stroke-width="2"/>
+      <circle cx="12" cy="11" r="3" fill="none" stroke="currentColor" stroke-width="2"/>
+    </svg>
+  </button>
+</div>
+
+      <div class="row">
+        <button class="btn primary" id="btn-login" type="button">Ingresar</button>
+        <button class="btn" id="btn-clear" type="button">Limpiar</button>
+      </div>
+
+      <div class="msg" id="msg"></div>
+      <div style="margin-top:10px">
+        <a href="/app/login" style="font-size:13px">Abrir versión nueva (React)</a>
+      </div>
+      <div style="margin-top:14px;color:#666;font-size:12px">
+        Si es la primera vez: usuario <b>admin</b> / contraseña <b>admin</b> (cambiar luego).
+      </div>
+    </div>
+
+    <script src="auth.js"></script>
+    <script>
+      const $ = (id) => document.getElementById(id);
+      const u = $("username");
+      const p = $("password");
+      const msg = $("msg");
+
+      $("btn-clear").addEventListener("click", () => {
+        u.value = "";
+        p.value = "";
+        msg.textContent = "";
+      });
+
+      async function login() {
+        msg.textContent = "";
+        const res = await fetch("/api/auth/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username: u.value.trim(), password: p.value }),
+        });
+        const data = await res.json().catch(() => ({}));
+if (!res.ok) {
+  const msg = data.error || "No se pudo iniciar sesión";
+  document.getElementById("msg").textContent = msg;
+  return;
+}
+
+        setSession(data.token, data.user);
+        const next = new URLSearchParams(location.search).get("next") || "/index.html";
+        location.href = next;
+      }
+
+      $("btn-login").addEventListener("click", login);
+      [u,p].forEach(el => el.addEventListener("keydown", (e) => { if (e.key === "Enter") login(); }));
+    </script>
+    <script>
+  const pass = document.getElementById("password");
+  const btn = document.getElementById("togglePass");
+
+  btn.addEventListener("click", () => {
+    pass.type = pass.type === "password" ? "text" : "password";
+  });
+</script>
+
+  </body>
+</html>

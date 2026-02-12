@@ -148,9 +148,33 @@ function badgeHtml(estado) {
    Cálculo Horas / Nocturnas
    ========================== */
 
+<<<<<<< HEAD
 // "YYYY-MM-DD" + "HH:MM" -> Date local
 function toLocalDate(fechaISO, hhmm) {
   const f = String(fechaISO || "");
+=======
+// Normaliza fechas a ISO "YYYY-MM-DD".
+// El input type="date" usa ISO como value, pero a veces llegan strings con espacios.
+function normISODate(v) {
+  const s = String(v ?? "").trim();
+  if (!s) return "";
+  // Ya viene ISO
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+  // Intento simple DD/MM/YYYY
+  const m = s.match(/^\s*(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (m) {
+    const dd = String(m[1]).padStart(2, "0");
+    const mm = String(m[2]).padStart(2, "0");
+    const yyyy = m[3];
+    return `${yyyy}-${mm}-${dd}`;
+  }
+  return s;
+}
+
+// "YYYY-MM-DD" + "HH:MM" -> Date local
+function toLocalDate(fechaISO, hhmm) {
+  const f = normISODate(fechaISO);
+>>>>>>> master
   const t = String(hhmm || "");
   const m = t.match(/^(\d{1,2}):(\d{2})$/);
   if (!f || !m) return null;
@@ -241,6 +265,7 @@ function calcHorasYNocturnas(r) {
    Estado ABIERTA / CIERRA / etc
    ========================== */
 
+<<<<<<< HEAD
 // ¿Existe abierta previa "de noche" que pueda cerrarse?
 function hayAbiertaAnterior(legajo, fechaISO) {
   const arr = openIndex[String(legajo || "")] || [];
@@ -252,24 +277,114 @@ function hayAbiertaAnterior(legajo, fechaISO) {
 }
 
 function computeEstado(r) {
+=======
+// IMPORTANTE:
+// - openIndex viene de BD (/api/jornadas-abiertas)
+// - pero en un import puede haber una ABIERTA y su cierre en el MISMO archivo.
+//   Para eso recalculamos estados a nivel batch (recomputeEstadosBatch).
+
+// ¿Existe abierta previa "de noche" que pueda cerrarse en BD?
+function hayAbiertaAnteriorDB(legajo, fechaISO) {
+  const arr = openIndex[String(legajo || "")] || [];
+  const fecha = normISODate(fechaISO);
+  return arr.some((a) => {
+    const f = normISODate(a.fecha_entrada || "");
+    const ent = String(a.entrada || "");
+    // Si hay una abierta de fecha anterior, o una abierta de turno noche (>=18:00)
+    return (f && fecha && f < fecha) || ent >= "18:00";
+  });
+}
+
+function computeEstadoRaw(r) {
+  if (r && r.forceOpen) return "ABRIR_ABIERTA";
+>>>>>>> master
   const puesto = r.puesto || "";
   const entrada = String(r.entrada || "");
   const salida = String(r.salida || "");
   const igual = entrada && salida && entrada === salida;
 
   if (isPlayero(puesto) && igual && esTarde(entrada)) return "ABRIR_ABIERTA";
+<<<<<<< HEAD
 
   // temprano igual NO siempre es cierre anterior
   if (isPlayero(puesto) && igual && esTemprano(entrada)) {
     return hayAbiertaAnterior(r.legajo, r.fecha) ? "CERRAR_ANTERIOR" : "ABRIR_ABIERTA";
   }
 
+=======
+  if (isPlayero(puesto) && igual && esTemprano(entrada)) return "CANDIDATO_CERRAR";
+>>>>>>> master
   if (igual) return "PENDIENTE";
   return "NORMAL";
 }
 
+<<<<<<< HEAD
 function applyEstado(r) {
   r.estado = computeEstado(r);
+=======
+// Recalcula estados considerando el batch completo para evitar dobles ABIERTAS
+function recomputeEstadosBatch() {
+  const openBatch = {}; // {legajo: [{fecha, entrada}]}
+
+  const idxs = registros
+    .map((_, i) => i)
+    .sort((ia, ib) => {
+      const a = registros[ia];
+      const b = registros[ib];
+      const fa = normISODate(a.fecha || "");
+      const fb = normISODate(b.fecha || "");
+      if (fa !== fb) return fa.localeCompare(fb);
+      return String(a.entrada || "").localeCompare(String(b.entrada || ""));
+    });
+
+  idxs.forEach((i) => {
+    const r = registros[i];
+    const raw = computeEstadoRaw(r);
+    const leg = String(r.legajo || "").trim();
+    const fecha = normISODate(r.fecha || "");
+    const ent = String(r.entrada || "");
+
+    if (raw === "ABRIR_ABIERTA") {
+      r.estado = "ABRIR_ABIERTA";
+      r.abierta = true;
+      if (leg) {
+        if (!openBatch[leg]) openBatch[leg] = [];
+        openBatch[leg].push({ fecha, entrada: ent });
+      }
+      return;
+    }
+
+    if (raw === "CANDIDATO_CERRAR") {
+      const hasDB = hayAbiertaAnteriorDB(leg, fecha);
+      const hasBatch = (openBatch[leg] || []).some((o) => {
+        const of = normISODate(o.fecha || "");
+        return (of && fecha && of < fecha) || String(o.entrada || "") >= "18:00";
+      });
+
+      if (hasDB || hasBatch) {
+        r.estado = "CERRAR_ANTERIOR";
+        r.abierta = false;
+      } else {
+        // No hay nada para cerrar -> se considera una nueva ABIERTA
+        r.estado = "ABRIR_ABIERTA";
+        r.abierta = true;
+        if (leg) {
+          if (!openBatch[leg]) openBatch[leg] = [];
+          openBatch[leg].push({ fecha, entrada: ent });
+        }
+      }
+      return;
+    }
+
+    r.estado = raw;
+    r.abierta = false;
+  });
+}
+
+// Compat: algunos flujos llaman applyEstado; dejamos versión simple
+function applyEstado(r) {
+  r.estado = computeEstadoRaw(r);
+>>>>>>> master
   r.abierta = r.estado === "ABRIR_ABIERTA";
 }
 
@@ -297,11 +412,22 @@ function refreshResumen() {
    ========================== */
 
 function renderSoloBody() {
+<<<<<<< HEAD
   tbody.innerHTML = registros
     .map((r, i) => {
       // recalcular siempre antes de mostrar
       calcHorasYNocturnas(r);
       applyEstado(r);
+=======
+  // recalcula todo considerando el batch (para cierres noche->mañana dentro del mismo import)
+  registros.forEach((r) => {
+    calcHorasYNocturnas(r);
+  });
+  recomputeEstadosBatch();
+
+  tbody.innerHTML = registros
+    .map((r, i) => {
+>>>>>>> master
 
       const rowClass = r.abierta ? "row-open" : "";
 
@@ -353,6 +479,7 @@ function renderSoloBody() {
       registros[i].fecha_salida = fechaSalida?.value || registros[i].fecha || "";
       registros[i].puesto = puestoSel?.value || "";
 
+<<<<<<< HEAD
       // recalcula horas/nocturnas + estado
       calcHorasYNocturnas(registros[i]);
       applyEstado(registros[i]);
@@ -371,6 +498,15 @@ function renderSoloBody() {
       if (tdNoct) tdNoct.textContent = Number(registros[i].nocturnas || 0).toFixed(2);
 
       refreshResumen();
+=======
+      // Si ya no es "igual", no tiene sentido forzar abierta
+      if (registros[i].entrada && registros[i].salida && registros[i].entrada !== registros[i].salida) {
+        registros[i].forceOpen = false;
+      }
+
+      // para no romper cierres cruzados (noche->mañana), re-renderizamos todo
+      renderSoloBody();
+>>>>>>> master
     }
 
     entrada?.addEventListener("input", recalc);
@@ -382,8 +518,12 @@ function renderSoloBody() {
       // fuerza "abierta" dejando salida = entrada
       registros[i].salida = registros[i].entrada || registros[i].salida || "";
       if (salida) salida.value = registros[i].salida;
+<<<<<<< HEAD
       registros[i].estado = "ABRIR_ABIERTA";
       registros[i].abierta = true;
+=======
+      registros[i].forceOpen = true;
+>>>>>>> master
       recalc();
     });
   });
@@ -480,8 +620,13 @@ form.addEventListener("submit", async (e) => {
     // ✅ precálculo para que ya se vean horas/nocturnas correctas
     registros.forEach((r) => {
       calcHorasYNocturnas(r);
+<<<<<<< HEAD
       applyEstado(r);
     });
+=======
+    });
+    recomputeEstadosBatch();
+>>>>>>> master
 
     initSortableOnce();
     renderSoloBody();
@@ -502,8 +647,13 @@ btnConfirmar.addEventListener("click", async () => {
     // ✅ antes de confirmar, recalcula todo por si quedaron edits sin refrescar
     registros.forEach((r) => {
       calcHorasYNocturnas(r);
+<<<<<<< HEAD
       applyEstado(r);
     });
+=======
+    });
+    recomputeEstadosBatch();
+>>>>>>> master
 
     const res = await fetch("/api/asistencias/confirmar", {
       method: "POST",

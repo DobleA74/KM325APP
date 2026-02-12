@@ -1,9 +1,15 @@
+<<<<<<< HEAD
 const express = require('express');
 const pages = require('../controllers/pages.controller');
+=======
+const express = require("express");
+const pages = require("../controllers/pages.controller");
+>>>>>>> master
 
 const router = express.Router();
 
 // Primary routes
+<<<<<<< HEAD
 router.get('/', pages.home);
 router.get('/rrhh', pages.rrhh);
 
@@ -36,5 +42,49 @@ router.get('/abm-empleados.html', (req, res) => res.redirect('/empleados'));
 router.get('/arqueos.html', (req, res) => res.redirect('/arqueos'));
 router.get('/liquidacion.html', (req, res) => res.redirect('/liquidacion'));
 router.get('/calendario.html', (req, res) => res.redirect('/calendario'));
+=======
+router.get("/", pages.home);
+router.get("/rrhh", pages.rrhh);
+
+router.get("/asistencias", pages.asistenciasMenu);
+router.get("/asistencias/carga", pages.asistenciasCarga);
+router.get("/asistencias/jornadas", pages.jornadasAbiertas);
+router.get("/asistencias/gestion", pages.gestionAsistencias);
+
+router.get("/empleados", pages.abmEmpleados);
+router.get("/arqueos", pages.arqueos);
+
+// ✅ API para React/Vite
+// router.get("/api/arqueos", pages.apiArqueos);
+
+// Calendario de turnos
+router.get("/calendario", pages.calendarioGrid);
+router.get("/calendario/patrones", pages.calendario);
+
+// Liquidación (nuevo)
+router.get("/liquidacion", pages.liquidacion);
+router.get("/liquidacion/tardanzas", pages.liquidacionTardanzas);
+router.get("/liquidacion/escalas", pages.liquidacionEscalas);
+router.get("/liquidacion/print", pages.liquidacionPrint);
+router.get("/liquidacion/recibo", pages.liquidacionRecibo);
+
+// Backwards compatible static paths
+router.get("/index.html", (req, res) => res.redirect("/"));
+router.get("/rrhh.html", (req, res) => res.redirect("/rrhh"));
+router.get("/asistencias-menu.html", (req, res) => res.redirect("/asistencias"));
+router.get("/asistencias-carga.html", (req, res) =>
+  res.redirect("/asistencias/carga")
+);
+router.get("/jornadas-abiertas.html", (req, res) =>
+  res.redirect("/asistencias/jornadas")
+);
+router.get("/gestion-asistencias.html", (req, res) =>
+  res.redirect("/asistencias/gestion")
+);
+router.get("/abm-empleados.html", (req, res) => res.redirect("/empleados"));
+router.get("/arqueos.html", (req, res) => res.redirect("/arqueos"));
+router.get("/liquidacion.html", (req, res) => res.redirect("/liquidacion"));
+router.get("/calendario.html", (req, res) => res.redirect("/calendario"));
+>>>>>>> master
 
 module.exports = router;

@@ -7,6 +7,11 @@ const fs = require("fs");
 const multer = require("multer");
 const XLSX = require("xlsx");
 const sqlite3 = require("sqlite3").verbose();
+<<<<<<< HEAD
+=======
+const crypto = require("crypto");
+const cors = require("cors");
+>>>>>>> master
 
 /* ===============================
    APP
@@ -18,8 +23,125 @@ app.set("view engine", "ejs");
 app.set("views", path.join(__dirname, "views"));
 
 const PORT = 3001;
+<<<<<<< HEAD
 
 app.use(express.json({ limit: "2mb" }));
+=======
+app.use(cors({
+  origin: ["http://localhost:5173"],
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+}));
+app.options("*", cors());
+
+app.use(express.json({ limit: "2mb" }));
+/* ===============================
+   AUTH + ROLES (minimal, compatible)
+   - Token stateless tipo JWT (HMAC SHA256)
+   - Password hash PBKDF2 (sin dependencias externas)
+================================ */
+const AUTH_SECRET = process.env.KM325_AUTH_SECRET || "km325-dev-secret-change-me";
+
+function b64url(input) {
+  return Buffer.from(input).toString("base64").replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
+}
+function b64urlJson(obj) {
+  return b64url(JSON.stringify(obj));
+}
+function hmacSha256(data) {
+  return crypto.createHmac("sha256", AUTH_SECRET).update(data).digest("base64").replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
+}
+function signToken(payload, expiresInSec = 60 * 60 * 12) {
+  const header = { alg: "HS256", typ: "JWT" };
+  const now = Math.floor(Date.now() / 1000);
+  const body = { ...payload, iat: now, exp: now + expiresInSec };
+  const p1 = b64urlJson(header);
+  const p2 = b64urlJson(body);
+  const sig = hmacSha256(p1 + "." + p2);
+  return p1 + "." + p2 + "." + sig;
+}
+function verifyToken(token) {
+  if (!token || typeof token !== "string") return null;
+  const parts = token.split(".");
+  if (parts.length !== 3) return null;
+  const [p1, p2, sig] = parts;
+  const expected = hmacSha256(p1 + "." + p2);
+  if (!crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) return null;
+  const payload = JSON.parse(Buffer.from(p2.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8"));
+  const now = Math.floor(Date.now() / 1000);
+  if (payload.exp && now > payload.exp) return null;
+  return payload;
+}
+
+// Password hashing (PBKDF2)
+function hashPassword(password) {
+  const salt = crypto.randomBytes(16).toString("hex");
+  const iterations = 120000;
+  const keylen = 32;
+  const digest = "sha256";
+  const hash = crypto.pbkdf2Sync(String(password || ""), salt, iterations, keylen, digest).toString("hex");
+  return `pbkdf2$${digest}$${iterations}$${salt}$${hash}`;
+}
+function verifyPassword(password, stored) {
+  try {
+    const [scheme, digest, itStr, salt, hash] = String(stored || "").split("$");
+    if (scheme !== "pbkdf2") return false;
+    const iterations = parseInt(itStr, 10);
+    const keylen = hash.length / 2;
+    const calc = crypto.pbkdf2Sync(String(password || ""), salt, iterations, keylen, digest).toString("hex");
+    return crypto.timingSafeEqual(Buffer.from(calc), Buffer.from(hash));
+  } catch {
+    return false;
+  }
+}
+
+function authMiddleware(req, res, next) {
+  const h = req.headers["authorization"] || "";
+  const m = String(h).match(/^Bearer\s+(.+)$/i);
+  const token = m ? m[1] : null;
+  const payload = verifyToken(token);
+  if (payload) req.user = payload;
+  next();
+}
+app.use(authMiddleware);
+
+function requireAuth(req, res, next) {
+  if (!req.user) return res.status(401).json({ error: "No autenticado" });
+  next();
+}
+function requireRole(roles = []) {
+  const allow = new Set(roles);
+  return (req, res, next) => {
+    if (!req.user) return res.status(401).json({ error: "No autenticado" });
+    if (!allow.has(req.user.rol)) return res.status(403).json({ error: "Sin permisos" });
+    next();
+  };
+}
+
+/* ===============================
+   SECTORES + CATEGORÍAS (estructura fija)
+================================ */
+const SECTORES = {
+  PLAYA: ["Playero/a", "Auxiliar de playa", "Refuerzo de playa"],
+  SHOP: ["Cajero/a", "Auxiliar de shop"],
+  "ADMINISTRACIÓN": ["Encargado"],
+};
+function normalizeSector(s) {
+  return String(s || "").trim().toUpperCase();
+}
+function validateSectorCategoria(sectorRaw, categoriaRaw) {
+  const sector = normalizeSector(sectorRaw);
+  const categorias = SECTORES[sector];
+  if (!categorias) return { ok: false, error: `Sector inválido. Debe ser uno de: ${Object.keys(SECTORES).join(", ")}` };
+  const categoria = String(categoriaRaw || "").trim();
+  if (categoria && !categorias.includes(categoria)) {
+    return { ok: false, error: `Categoría inválida para el sector ${sector}. Debe ser una de: ${categorias.join(", ")}` };
+  }
+  return { ok: true, sector, categoria };
+}
+
+>>>>>>> master
 
 // Page routes (rendered with EJS)
 const pagesRoutes = require("./routes/pages.routes");
@@ -28,6 +150,21 @@ app.use(pagesRoutes);
 // Static assets
 app.use(express.static(path.join(__dirname, "public"), { index: false }));
 
+<<<<<<< HEAD
+=======
+// React (Vite build) servido en paralelo: /app/*
+// - No rompe rutas existentes
+// - Fallback SPA para rutas internas de React Router
+const reactDist = path.join(__dirname, "public", "app");
+app.use("/app", express.static(reactDist, { index: false }));
+app.get("/app/*", (req, res) => {
+  // si todavía no hiciste build, esto va a 404 (ok)
+  const indexHtml = path.join(reactDist, "index.html");
+  if (fs.existsSync(indexHtml)) return res.sendFile(indexHtml);
+  return res.status(404).send("React app no compilada. Ejecutá: npm run client:build");
+});
+
+>>>>>>> master
 /* ===============================
    SQLITE
 ================================ */
@@ -73,6 +210,11 @@ const pickExistingDb = () => {
 const dbPath = pickExistingDb();
 console.log("[KM325] DB:", dbPath);
 const db = new sqlite3.Database(dbPath);
+<<<<<<< HEAD
+=======
+app.locals.db = db;
+
+>>>>>>> master
 
 // Promise helpers (para endpoints async)
 function allSql(sql, params = []) {
@@ -111,6 +253,124 @@ function sectorKey(v) {
   return normSector(v).toLowerCase();
 }
 
+<<<<<<< HEAD
+=======
+app.get("/api/liquidacion/calendario", async (req, res) => {
+  const mes = String(req.query.mes || "").trim();
+  const r = monthRange(mes);
+  if (!r)
+    return res.status(400).json({ ok: false, error: "Mes inválido (YYYY-MM)" });
+
+  try {
+    const emps = await allSql(
+      "SELECT legajo, nombre, sector, puesto FROM empleados WHERE activo=1",
+    );
+    const asigns = await allSql("SELECT * FROM calendario_empleado_patron");
+    const asignMap = new Map(
+      (asigns || []).map((a) => [normLegajo(a.legajo), a]),
+    );
+    const patronIds = Array.from(
+      new Set((asigns || []).map((a) => Number(a.patron_id)).filter(Boolean)),
+    );
+
+    const patronMap = new Map();
+    const detByPatron = new Map();
+    for (const pid of patronIds) {
+      const p = (
+        await allSql("SELECT * FROM calendario_patrones WHERE id=?", [pid])
+      )[0];
+      if (!p) continue;
+      patronMap.set(pid, p);
+      const det = await allSql(
+        "SELECT * FROM calendario_patron_detalle WHERE patron_id=?",
+        [pid],
+      );
+      detByPatron.set(
+        pid,
+        new Map((det || []).map((d) => [Number(d.dia_idx), d])),
+      );
+    }
+
+    const exRows = await allSql(
+      "SELECT * FROM calendario_excepciones WHERE fecha BETWEEN ? AND ?",
+      [r.start, r.end],
+    );
+    const exMap = new Map(); // leg|fecha -> ex
+    for (const ex of exRows || []) {
+      const leg = normLegajo(ex.legajo);
+      const f = String(ex.fecha || "");
+      if (!leg || !f) continue;
+      exMap.set(`${leg}|${f}`, ex);
+    }
+
+    const out = [];
+    for (const e of emps || []) {
+      const leg = normLegajo(e.legajo);
+      if (!leg) continue;
+
+      let francos = 0;
+      let programados = 0;
+
+      let cur = r.start;
+      while (cur <= r.end) {
+        const ex = exMap.get(`${leg}|${cur}`);
+        let turno = "";
+
+        if (ex) {
+          turno = ex.turno_override
+            ? String(ex.turno_override).toUpperCase()
+            : "";
+          if (!turno) {
+            const tipo = String(ex.tipo || "").toUpperCase();
+            if (
+              ["VACACIONES", "LICENCIA", "PERMISO", "ENFERMEDAD"].includes(tipo)
+            )
+              turno = "AUSENCIA";
+            if (tipo === "FRANCO_EXTRA") turno = "FRANCO";
+          }
+        } else {
+          const as = asignMap.get(leg);
+          if (as) {
+            const pid = Number(as.patron_id);
+            const patron = patronMap.get(pid);
+            const detMap = detByPatron.get(pid) || new Map();
+            if (patron) {
+              const diff = daysBetween(as.fecha_inicio, cur);
+              const idx =
+                ((diff % patron.ciclo_dias) + patron.ciclo_dias) %
+                patron.ciclo_dias;
+              const d = detMap.get(idx);
+              turno = d ? String(d.turno).toUpperCase() : "FRANCO";
+            }
+          }
+        }
+
+        const t = String(turno || "").toUpperCase();
+        if (t === "FRANCO") francos++;
+        if (["MANIANA", "TARDE", "NOCHE"].includes(t)) programados++;
+
+        cur = addDays(cur, 1);
+      }
+
+      out.push({
+        legajo: leg,
+        nombre: e.nombre || "",
+        francos_calendario: francos,
+        dias_programados_calendario: programados,
+      });
+    }
+
+    out.sort((a, b) =>
+      String(a.nombre || "").localeCompare(String(b.nombre || "")),
+    );
+    res.json({ ok: true, mes, rango: r, items: out });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ ok: false, error: "Error contando calendario" });
+  }
+});
+
+>>>>>>> master
 // Agrupa nombres de sector usados en el sistema y en la DB
 // - 'MINI' suele ser el Shop (Mini/tienda)
 function sectorGroup(v) {
@@ -305,6 +565,179 @@ db.serialize(() => {
     )
   `);
 
+<<<<<<< HEAD
+=======
+  // Usuarios (auth + roles)
+ // =========================
+// USUARIOS (AUTH) - tabla + seed
+// =========================
+db.run(`
+  CREATE TABLE IF NOT EXISTS usuarios (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT UNIQUE NOT NULL,
+    password_hash TEXT NOT NULL,
+    rol TEXT NOT NULL DEFAULT 'ADMIN',
+    activo INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT DEFAULT (datetime('now'))
+  )
+`);
+
+// Migración compat: asegurar columnas en DBs viejas (sin romper datos)
+Promise.resolve()
+  .then(() => addColumnIfMissing("usuarios", "password_hash", "password_hash TEXT"))
+  .then(() => addColumnIfMissing("usuarios", "rol", "rol TEXT NOT NULL DEFAULT 'ADMIN'"))
+  .then(() => addColumnIfMissing("usuarios", "activo", "activo INTEGER NOT NULL DEFAULT 1"))
+  .catch(() => {});
+
+db.get("SELECT COUNT(*) AS c FROM usuarios", (err, row) => {
+  if (err) {
+    console.error("Error contando usuarios:", err);
+    return;
+  }
+  if ((row?.c || 0) === 0) {
+    const adminUser = process.env.KM325_ADMIN_USER || "admin";
+    const adminPass = process.env.KM325_ADMIN_PASS || "admin";
+    const ph = hashPassword(adminPass);
+
+    db.run(
+      "INSERT INTO usuarios (username, password_hash, rol, activo) VALUES (?, ?, ?, 1)",
+      [adminUser, ph, "ADMIN"],
+      (e) => {
+        if (e) console.error("Error creando admin seed:", e);
+        else console.log(`✅ Usuario admin creado: ${adminUser} / ${adminPass} (cambiar luego)`);
+      }
+    );
+  }
+});
+
+
+  // =========================
+// AUTH endpoints
+// =========================
+app.post("/api/auth/login", (req, res) => {
+  const { username, password } = req.body || {};
+  const u = String(username || "").trim();
+  const p = String(password || "");
+
+  if (!u || !p) return res.status(400).json({ error: "Faltan credenciales" });
+
+  // Helper: verifica hash PBKDF2 o texto plano (compat DB vieja)
+  const verifyPasswordCompat = (plain, stored) => {
+    const s = String(stored || "");
+    if (!s) return false;
+    if (s.startsWith("pbkdf2$")) return verifyPassword(plain, s);
+    return plain === s;
+  };
+
+  // 1) Intento con esquema nuevo (password_hash)
+  db.get(
+    "SELECT id, username, password_hash, rol, activo FROM usuarios WHERE username = ?",
+    [u],
+    (err, user) => {
+      if (err) {
+        // Si la DB vieja no tiene password_hash, caemos al esquema viejo
+        const msg = String(err.message || "");
+        if (msg.includes("no such column") && msg.includes("password_hash")) {
+          return db.get(
+            "SELECT id, username, password AS password_hash, rol, activo FROM usuarios WHERE username = ?",
+            [u],
+            (err2, user2) => {
+              if (err2) {
+                console.error("[AUTH] DB error (fallback):", err2.message);
+                return res.status(500).json({ error: "Error DB" });
+              }
+              if (!user2) return res.status(401).json({ error: "Credenciales inválidas" });
+              if (Number(user2.activo ?? 1) === 0) return res.status(401).json({ error: "Usuario inactivo" });
+
+              const ok2 = verifyPasswordCompat(p, user2.password_hash);
+              if (!ok2) return res.status(401).json({ error: "Credenciales inválidas" });
+
+              const token = signToken({ id: user2.id, username: user2.username, rol: user2.rol });
+              return res.json({ token, user: { id: user2.id, username: user2.username, rol: user2.rol } });
+            }
+          );
+        }
+
+        console.error("[AUTH] DB error:", err.message);
+        return res.status(500).json({ error: "Error DB" });
+      }
+
+      if (!user) return res.status(401).json({ error: "Credenciales inválidas" });
+      if (Number(user.activo ?? 1) === 0) return res.status(401).json({ error: "Usuario inactivo" });
+
+      const ok = verifyPasswordCompat(p, user.password_hash);
+      if (!ok) return res.status(401).json({ error: "Credenciales inválidas" });
+
+      const token = signToken({ id: user.id, username: user.username, rol: user.rol });
+      res.json({ token, user: { id: user.id, username: user.username, rol: user.rol } });
+    }
+  );
+});
+
+
+app.get("/api/auth/me", requireAuth, (req, res) => {
+  res.json({ user: req.user });
+});
+
+// Cambiar contraseña (usuario logueado)
+// - mantiene compat con DBs viejas (password en texto plano)
+app.patch("/api/auth/password", requireAuth, (req, res) => {
+  const { currentPassword, newPassword } = req.body || {};
+  const cur = String(currentPassword || "");
+  const next = String(newPassword || "");
+
+  if (!next || next.length < 4) {
+    return res.status(400).json({ error: "La nueva contraseña es muy corta" });
+  }
+
+  const verifyPasswordCompat = (plain, stored) => {
+    const s = String(stored || "");
+    if (!s) return false;
+    if (s.startsWith("pbkdf2$")) return verifyPassword(plain, s);
+    return plain === s;
+  };
+
+  // Traemos el usuario desde DB (evita confiar solo en el token)
+  db.get(
+    "SELECT id, username, password_hash FROM usuarios WHERE id = ?",
+    [req.user.id],
+    (err, u) => {
+      if (err) return res.status(500).json({ error: "DB error" });
+      if (!u) return res.status(404).json({ error: "Usuario no encontrado" });
+
+      if (cur) {
+        if (!verifyPasswordCompat(cur, u.password_hash)) {
+          return res.status(400).json({ error: "Contraseña actual inválida" });
+        }
+      }
+
+      const ph = hashPassword(next);
+      db.run("UPDATE usuarios SET password_hash=? WHERE id=?", [ph, u.id], (e2) => {
+        if (e2) return res.status(500).json({ error: "DB error" });
+        return res.json({ ok: true });
+      });
+    },
+  );
+});
+
+// Familiares del empleado (ficha de ingreso)
+  db.run(`
+    CREATE TABLE IF NOT EXISTS empleados_familiares (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      empleado_legajo TEXT NOT NULL,
+      parentesco TEXT,
+      nombre TEXT,
+      cuil TEXT,
+      fecha_nac TEXT,
+      part_mat_nac INTEGER DEFAULT 0,
+      tomo TEXT,
+      acta TEXT,
+      folio TEXT,
+      FOREIGN KEY (empleado_legajo) REFERENCES empleados(legajo) ON DELETE CASCADE
+    )
+  `);
+
+>>>>>>> master
   db.run(`
     CREATE TABLE IF NOT EXISTS calendario_avisos_cobertura (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -324,6 +757,34 @@ db.serialize(() => {
   // Migraciones idempotentes (agregar columnas nuevas sin romper DB existente)
   addColumnIfMissing("empleados", "categoria", "categoria TEXT");
   addColumnIfMissing("empleados", "fecha_ingreso", "fecha_ingreso TEXT");
+<<<<<<< HEAD
+=======
+  // Ficha de ingreso (datos personales)
+  addColumnIfMissing("empleados", "cuil", "cuil TEXT");
+  addColumnIfMissing("empleados", "dni", "dni TEXT");
+  addColumnIfMissing("empleados", "domicilio", "domicilio TEXT");
+  addColumnIfMissing("empleados", "localidad", "localidad TEXT");
+  addColumnIfMissing("empleados", "nacionalidad", "nacionalidad TEXT");
+  addColumnIfMissing("empleados", "estado_civil", "estado_civil TEXT");
+  addColumnIfMissing("empleados", "fecha_nacimiento", "fecha_nacimiento TEXT");
+  addColumnIfMissing("empleados", "telefono_fijo", "telefono_fijo TEXT");
+  addColumnIfMissing("empleados", "telefono_celular", "telefono_celular TEXT");
+  addColumnIfMissing("empleados", "email", "email TEXT");
+  addColumnIfMissing("empleados", "estudios", "estudios TEXT");
+  addColumnIfMissing("empleados", "gremio", "gremio TEXT");
+  addColumnIfMissing("empleados", "basico", "basico REAL");
+  addColumnIfMissing("empleados", "es_jubilado", "es_jubilado INTEGER DEFAULT 0");
+
+  // Datos laborales adicionales
+  addColumnIfMissing("empleados", "lugar_trabajo", "lugar_trabajo TEXT");
+  addColumnIfMissing("empleados", "obra_social", "obra_social TEXT");
+  addColumnIfMissing("empleados", "cbu", "cbu TEXT");
+  addColumnIfMissing("empleados", "banco", "banco TEXT");
+  addColumnIfMissing("empleados", "talle_pantalon", "talle_pantalon TEXT");
+  addColumnIfMissing("empleados", "talle_camisa", "talle_camisa TEXT");
+  addColumnIfMissing("empleados", "numero_botines", "numero_botines TEXT");
+
+>>>>>>> master
   addColumnIfMissing(
     "calendario_excepciones",
     "sector_override",
@@ -621,6 +1082,90 @@ db.serialize(() => {
   );
   feriados2026.forEach((row) => stmtF.run(row));
   stmtF.finalize();
+<<<<<<< HEAD
+=======
+
+  // Seed usuario admin si no existe ninguno
+  db.get("SELECT COUNT(*) AS c FROM usuarios", [], (err, row) => {
+    if (err) return console.error("[KM325] usuarios seed error:", err);
+    const c = (row && row.c) || 0;
+    if (c > 0) return;
+
+    const defaultUser = process.env.KM325_ADMIN_USER || "admin";
+    const defaultPass = process.env.KM325_ADMIN_PASS || "admin";
+    const ph = hashPassword(defaultPass);
+    db.run(
+      "INSERT INTO usuarios (username, password_hash, rol, activo) VALUES (?,?,?,1)",
+      [defaultUser, ph, "ADMIN"],
+      (e2) => {
+        if (e2) console.error("[KM325] seed admin error:", e2);
+        else console.log(`[KM325] Usuario admin creado: ${defaultUser} / ${defaultPass} (cambiar en producción)`);
+      },
+    );
+  });
+});
+
+
+/* ==============================
+   USUARIOS (API) - solo ADMIN
+================================ */
+app.get("/api/usuarios", requireRole(["ADMIN"]), (req, res) => {
+  db.all("SELECT id, username, rol, activo, created_at FROM usuarios ORDER BY id DESC", [], (err, rows) => {
+    if (err) return res.status(500).json({ error: "DB error" });
+    res.json(rows || []);
+  });
+});
+
+app.post("/api/usuarios", requireRole(["ADMIN"]), (req, res) => {
+  const { username, password, rol } = req.body || {};
+  const u = String(username || "").trim();
+  const p = String(password || "");
+  const r = String(rol || "").trim().toUpperCase();
+  if (!u) return res.status(400).json({ error: "Falta username" });
+  if (!p) return res.status(400).json({ error: "Falta password" });
+  if (!["ADMIN","SUPERVISOR","OPERADOR","LECTURA"].includes(r)) return res.status(400).json({ error: "Rol inválido" });
+
+  const ph = hashPassword(p);
+  db.run("INSERT INTO usuarios (username, password_hash, rol, activo) VALUES (?,?,?,1)", [u, ph, r], (err) => {
+    if (err) {
+      if (String(err.message||"").includes("UNIQUE")) return res.status(409).json({ error: "Usuario ya existe" });
+      return res.status(500).json({ error: "DB error" });
+    }
+    res.json({ ok: true });
+  });
+});
+
+app.patch("/api/usuarios/:id", requireRole(["ADMIN"]), (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!id) return res.status(400).json({ error: "ID inválido" });
+
+  const { password, rol, activo } = req.body || {};
+  const sets = [];
+  const params = [];
+
+  if (password !== undefined) {
+    if (!String(password || "")) return res.status(400).json({ error: "Password vacío" });
+    sets.push("password_hash=?");
+    params.push(hashPassword(password));
+  }
+  if (rol !== undefined) {
+    const r = String(rol || "").trim().toUpperCase();
+    if (!["ADMIN","SUPERVISOR","OPERADOR","LECTURA"].includes(r)) return res.status(400).json({ error: "Rol inválido" });
+    sets.push("rol=?");
+    params.push(r);
+  }
+  if (activo !== undefined) {
+    sets.push("activo=?");
+    params.push(activo ? 1 : 0);
+  }
+  if (!sets.length) return res.json({ ok: true });
+
+  params.push(id);
+  db.run(`UPDATE usuarios SET ${sets.join(", ")} WHERE id=?`, params, (err) => {
+    if (err) return res.status(500).json({ error: "DB error" });
+    res.json({ ok: true });
+  });
+>>>>>>> master
 });
 
 /* ===============================
@@ -765,6 +1310,57 @@ app.post("/api/asistencias/confirmar", (req, res) => {
     return res.status(400).json({ ok: false, error: "Formato inválido" });
   }
 
+<<<<<<< HEAD
+=======
+  // IMPORTANTE:
+  // El import puede traer varios días mezclados y en la UI el usuario puede
+  // ordenar la tabla. Si procesamos "tal como llega", puede suceder que una
+  // fichada temprana (p.ej. 05:01 = 05:01) se procese ANTES que la abierta de
+  // la noche anterior (p.ej. 20:44 = 20:44), lo que genera dobles "ABIERTA".
+  // Para evitarlo, siempre procesamos en orden cronológico (fecha+hora).
+
+  function normISODateLocal(v) {
+    const s = String(v || "").trim();
+    if (!s) return "";
+    if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+    const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+    if (m) {
+      const dd = String(m[1]).padStart(2, "0");
+      const mm = String(m[2]).padStart(2, "0");
+      const yyyy = m[3];
+      return `${yyyy}-${mm}-${dd}`;
+    }
+    return s;
+  }
+
+  function normHHMM(v) {
+    const s = String(v || "").trim();
+    const m = s.match(/^(\d{1,2}):(\d{2})$/);
+    if (!m) return "";
+    const hh = String(m[1]).padStart(2, "0");
+    const mm = String(m[2]);
+    return `${hh}:${mm}`;
+  }
+
+  // IMPORTANTE:
+  // El import puede traer varios días mezclados y la UI permite ordenar/filtrar.
+  // Para que el cierre de jornadas_abiertas funcione correctamente (noche -> mañana),
+  // procesamos SIEMPRE en orden cronológico (fecha asc, entrada asc).
+  const normISODate = (v) => {
+    const s = String(v || "").trim();
+    if (!s) return "";
+    if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+    const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+    if (m) {
+      const dd = String(m[1]).padStart(2, "0");
+      const mm = String(m[2]).padStart(2, "0");
+      const yyyy = m[3];
+      return `${yyyy}-${mm}-${dd}`;
+    }
+    return s;
+  };
+
+>>>>>>> master
   let insertados = 0;
   let ignorados = 0;
   let abiertas_creadas = 0;
@@ -778,7 +1374,23 @@ app.post("/api/asistencias/confirmar", (req, res) => {
     VALUES (?,?,?,?,?,?,?,?,?,?)
   `);
 
+<<<<<<< HEAD
   const items = registros.slice();
+=======
+  // Copia + orden cronológico estable
+  const items = registros.slice().sort((a, b) => {
+    const fa = normISODateLocal(a.fecha || a.fecha_entrada || "");
+    const fb = normISODateLocal(b.fecha || b.fecha_entrada || "");
+    if (fa !== fb) return fa.localeCompare(fb);
+
+    const ha = normHHMM(a.entrada || "");
+    const hb = normHHMM(b.entrada || "");
+    if (ha !== hb) return ha.localeCompare(hb);
+
+    // desempate: legajo
+    return String(a.legajo || "").localeCompare(String(b.legajo || ""), "es");
+  });
+>>>>>>> master
 
   function next() {
     const r = items.shift();
@@ -1186,20 +1798,37 @@ app.post("/api/asistencias/confirmar", (req, res) => {
 /* ===============================
    ABM EMPLEADOS (API)
 ================================ */
+<<<<<<< HEAD
 app.get("/api/empleados", (req, res) => {
+=======
+app.get("/api/empleados", requireRole(["ADMIN","SUPERVISOR"]), (req, res) => {
+>>>>>>> master
   db.all("SELECT * FROM empleados ORDER BY legajo", [], (e, rows) => {
     if (e) return res.status(500).json({ error: "DB error" });
     res.json(rows || []);
   });
 });
 
+<<<<<<< HEAD
 app.post("/api/empleados", (req, res) => {
   const { legajo, nombre, sector, puesto, categoria, fecha_ingreso } =
+=======
+app.post("/api/empleados", requireRole(["ADMIN"]), (req, res) => {
+  const { legajo, nombre, sector, puesto, categoria, fecha_ingreso, ...rest } =
+>>>>>>> master
     req.body || {};
   const L = normLegajo(legajo);
   if (!L) return res.status(400).json({ error: "Falta legajo" });
 
+<<<<<<< HEAD
   const cat = String(categoria || "").trim();
+=======
+  // Sector + categoría (compatibilidad: si no viene "categoria", usamos "puesto")
+  const catIn = String((categoria ?? puesto) || "").trim();
+  const v = validateSectorCategoria(sector, catIn);
+  if (!v.ok) return res.status(400).json({ error: v.error });
+
+>>>>>>> master
   const fi = String(fecha_ingreso || "").trim();
   const fiOk = !fi || /^\d{4}-\d{2}-\d{2}$/.test(fi);
   if (!fiOk)
@@ -1212,9 +1841,15 @@ app.post("/api/empleados", (req, res) => {
     [
       L,
       String(nombre || ""),
+<<<<<<< HEAD
       String(sector || ""),
       String(puesto || ""),
       cat,
+=======
+      v.sector,
+      v.categoria,
+      v.categoria,
+>>>>>>> master
       fi,
     ],
     (err) => {
@@ -1224,7 +1859,11 @@ app.post("/api/empleados", (req, res) => {
   );
 });
 
+<<<<<<< HEAD
 app.delete("/api/empleados/:legajo", (req, res) => {
+=======
+app.delete("/api/empleados/:legajo", requireRole(["ADMIN"]), (req, res) => {
+>>>>>>> master
   const L = normLegajo(req.params.legajo);
   db.run("DELETE FROM empleados WHERE legajo=?", [L], (err) => {
     if (err) return res.status(500).json({ ok: false, error: "DB error" });
@@ -1232,6 +1871,94 @@ app.delete("/api/empleados/:legajo", (req, res) => {
   });
 });
 
+<<<<<<< HEAD
+=======
+
+/* ============
+   EMPLEADOS (DETALLE + FAMILIARES)
+============== */
+app.get("/api/empleados/:legajo", requireRole(["ADMIN","SUPERVISOR"]), async (req, res) => {
+  try {
+    const L = normLegajo(req.params.legajo);
+    const emp = await dbGet("SELECT * FROM empleados WHERE legajo=?", [L]);
+    if (!emp) return res.status(404).json({ error: "No existe" });
+    const fam = await dbAll("SELECT * FROM empleados_familiares WHERE empleado_legajo=? ORDER BY id", [L]);
+    res.json({ ...emp, familiares: fam });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "DB error" });
+  }
+});
+
+app.patch("/api/empleados/:legajo", requireRole(["ADMIN"]), (req, res) => {
+  const L = normLegajo(req.params.legajo);
+  const body = req.body || {};
+
+  // Validación sector/categoría si viene
+  if (body.sector !== undefined || body.categoria !== undefined || body.puesto !== undefined) {
+    const catIn = String((body.categoria ?? body.puesto) || "").trim();
+    const v = validateSectorCategoria(body.sector ?? "", catIn);
+    if (!v.ok) return res.status(400).json({ error: v.error });
+    body.sector = v.sector;
+    body.categoria = v.categoria;
+    body.puesto = v.categoria;
+  }
+
+  const allowed = [
+    "nombre","sector","puesto","categoria","activo",
+    "cuil","dni","domicilio","localidad","nacionalidad","estado_civil","fecha_nacimiento",
+    "telefono_fijo","telefono_celular","email","estudios","gremio","basico","es_jubilado",
+    "fecha_ingreso","lugar_trabajo","obra_social","cbu","banco","talle_pantalon","talle_camisa","numero_botines"
+  ];
+
+  const sets = [];
+  const params = [];
+  for (const k of allowed) {
+    if (body[k] === undefined) continue;
+    sets.push(`${k}=?`);
+    params.push(body[k]);
+  }
+  if (!sets.length) return res.json({ ok: true });
+
+  params.push(L);
+  db.run(`UPDATE empleados SET ${sets.join(", ")} WHERE legajo=?`, params, (err) => {
+    if (err) return res.status(500).json({ error: "DB error" });
+    res.json({ ok: true });
+  });
+});
+
+// Reemplaza familiares del empleado (simple, robusto)
+app.put("/api/empleados/:legajo/familiares", requireRole(["ADMIN"]), (req, res) => {
+  const L = normLegajo(req.params.legajo);
+  const familiares = Array.isArray(req.body) ? req.body : [];
+  db.serialize(() => {
+    db.run("DELETE FROM empleados_familiares WHERE empleado_legajo=?", [L]);
+    const stmt = db.prepare(`
+      INSERT INTO empleados_familiares
+      (empleado_legajo, parentesco, nombre, cuil, fecha_nac, part_mat_nac, tomo, acta, folio)
+      VALUES (?,?,?,?,?,?,?,?,?)
+    `);
+    for (const f of familiares) {
+      stmt.run([
+        L,
+        String(f.parentesco || ""),
+        String(f.nombre || ""),
+        String(f.cuil || ""),
+        String(f.fecha_nac || ""),
+        f.part_mat_nac ? 1 : 0,
+        String(f.tomo || ""),
+        String(f.acta || ""),
+        String(f.folio || ""),
+      ]);
+    }
+    stmt.finalize((err) => {
+      if (err) return res.status(500).json({ error: "DB error" });
+      res.json({ ok: true });
+    });
+  });
+});
+
+>>>>>>> master
 /* ===============================
    PUESTOS / HORARIOS (API)
    Tabla: puesto_horarios
@@ -1853,6 +2580,43 @@ app.get("/api/arqueos", (req, res) => {
   );
 });
 
+<<<<<<< HEAD
+=======
+// Detalle de arqueos asignados por empleado en un mes (para liquidación)
+app.get("/api/arqueos/empleado", (req, res) => {
+  const legajo = String(req.query.legajo || "").trim();
+  const mes = String(req.query.mes || "").trim(); // YYYY-MM
+  if (!legajo)
+    return res.status(400).json({ ok: false, error: "Falta legajo" });
+  const rng = monthRange(mes);
+  if (!rng) return res.status(400).json({ ok: false, error: "mes inválido" });
+
+  const sql = `
+    SELECT a.fecha, a.sector, a.turno, aa.monto_final
+    FROM arqueo_asignaciones aa
+    JOIN arqueos a ON a.id = aa.arqueo_id
+    WHERE aa.legajo = ?
+      AND a.fecha BETWEEN ? AND ?
+    ORDER BY a.fecha ASC, a.sector ASC, a.turno ASC
+  `;
+
+  db.all(sql, [legajo, rng.start, rng.end], (err, rows) => {
+    if (err) return res.status(500).json({ ok: false, error: "DB arqueos" });
+    const items = (rows || []).map((r) => ({
+      fecha: r.fecha,
+      sector: r.sector,
+      turno: r.turno,
+      monto_final: Number(r.monto_final || 0),
+    }));
+    const total = items.reduce(
+      (acc, it) => acc + Number(it.monto_final || 0),
+      0,
+    );
+    res.json({ ok: true, legajo, mes, items, total: Number(total.toFixed(2)) });
+  });
+});
+
+>>>>>>> master
 /* ===============================
    FERIADOS
 ================================ */
@@ -3023,9 +3787,27 @@ app.get("/api/liquidacion", (req, res) => {
                                 );
                                 diasSet.delete("");
 
+<<<<<<< HEAD
                                 try {
                                   const exRows = await allSql(
                                     `SELECT fecha
+=======
+                                const { francos, francoDates } =
+                                  await contarCalendarioEmpleadoEnRango(
+                                    leg,
+                                    r.start,
+                                    r.end,
+                                  );
+
+                                // Regla negocio: FRANCO cuenta como día trabajado
+                                for (const f of francoDates) diasSet.add(f);
+                                diasSet.delete("");
+                                const francoSet = new Set();
+
+                                try {
+                                  const exRows = await allSql(
+                                    `SELECT fecha, tipo
+>>>>>>> master
                                FROM calendario_excepciones
                                WHERE legajo = ?
                                  AND fecha BETWEEN ? AND ?
@@ -3037,13 +3819,29 @@ app.get("/api/liquidacion", (req, res) => {
                                       0,
                                       10,
                                     );
+<<<<<<< HEAD
                                     if (f) diasSet.add(f);
+=======
+                                    const t = String(ex.tipo || "")
+                                      .trim()
+                                      .toUpperCase();
+                                    if (f) diasSet.add(f);
+                                    if (
+                                      f &&
+                                      (t === "FRANCO" || t === "FRANCO_EXTRA")
+                                    )
+                                      francoSet.add(f);
+>>>>>>> master
                                   }
                                 } catch (e) {
                                   // si algo falla, no rompemos la liquidación
                                 }
 
                                 const diasTrab = diasSet.size;
+<<<<<<< HEAD
+=======
+                                const diasFranco = francoSet.size;
+>>>>>>> master
 
                                 // Noches por turno (únicos por fecha)
                                 const nochesSet = new Set();
@@ -3123,6 +3921,10 @@ app.get("/api/liquidacion", (req, res) => {
                                   categoria: cat,
                                   fecha_ingreso: emp.fecha_ingreso,
                                   dias_trabajados: diasTrab,
+<<<<<<< HEAD
+=======
+                                  dias_franco: diasFranco,
+>>>>>>> master
                                   noches_turnos: nochesTurnos,
                                   feriados_trabajados: feriadosTrab,
                                   tardanzas,
