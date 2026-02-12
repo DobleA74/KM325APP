@@ -55,6 +55,37 @@ exports.arqueos = (req, res) => {
     topbarMode: 'internal',
   });
 };
+<<<<<<< HEAD
+=======
+exports.apiArqueos = async (req, res) => {
+  try {
+    const fecha = req.query.fecha;
+    if (!fecha) return res.status(400).json({ error: "Falta fecha" });
+
+    // OJO: acá hay que reutilizar tu lógica real.
+    // Si ya existe una función que trae los datos desde sqlite,
+    // llamala acá y devolvé JSON.
+    //
+    // Ejemplo genérico (ajustamos según tu DB):
+    const db = req.app.locals.db; // si lo guardaste así
+    if (!db) return res.status(500).json({ error: "DB no inicializada" });
+
+    // Si no, usá el objeto db que uses actualmente en el controller.
+
+    db.all(
+      "SELECT * FROM arqueos WHERE fecha = ?",
+      [fecha],
+      (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+        return res.json({ fecha, items: rows });
+      }
+    );
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "Error interno" });
+  }
+};
+>>>>>>> master
 
 // Calendario
 // /calendario -> grilla mensual tipo Excel (PLAYA / SHOP)
@@ -102,3 +133,15 @@ exports.liquidacionPrint = (req, res) => {
     bodyClass: 'no-table-cards',
   });
 };
+<<<<<<< HEAD
+=======
+
+// Recibo individual (para exportar PDF desde el navegador)
+exports.liquidacionRecibo = (req, res) => {
+  res.render('pages/liquidacion-recibo', {
+    pageTitle: 'KM325 RRHH – Recibo',
+    topbarMode: 'internal',
+    bodyClass: 'no-table-cards',
+  });
+};
+>>>>>>> master
