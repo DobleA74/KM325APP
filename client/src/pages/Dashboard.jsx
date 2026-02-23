@@ -14,9 +14,9 @@ export default function Dashboard() {
           <h3 style={{ marginTop: 0 }}>Migración incremental</h3>
           <p className="muted">Empezamos por Auth + Layout + Configuración/Usuarios. Las pantallas operativas se irán moviendo una por una.</p>
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-            <a className="btn" href="/app/empleados">Empleados</a>
-            <a className="btn" href="/app/arqueos">Arqueos</a>
-            <a className="btn primary" href="/app/perfil">Mi perfil</a>
+            <a className="btn" href="/empleados">Empleados</a>
+            <a className="btn" href="/arqueos">Arqueos</a>
+            <a className="btn primary" href="/perfil">Mi perfil</a>
           </div>
         </div>
         <div className="card">

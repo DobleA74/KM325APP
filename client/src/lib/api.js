@@ -3,8 +3,7 @@ const API_BASE = import.meta.env.VITE_API_BASE || "";
 function getToken() {
   return (
     localStorage.getItem("km325_token") ||
-    localStorage.getItem("km325_token") || // por si lo guardaste con otro nombre antes
-    localStorage.getItem("km325_token") ||
+    localStorage.getItem("token") ||
     ""
   );
 }

@@ -7,11 +7,8 @@ const fs = require("fs");
 const multer = require("multer");
 const XLSX = require("xlsx");
 const sqlite3 = require("sqlite3").verbose();
-<<<<<<< HEAD
-=======
 const crypto = require("crypto");
 const cors = require("cors");
->>>>>>> master
 
 /* ===============================
    APP
@@ -23,10 +20,6 @@ app.set("view engine", "ejs");
 app.set("views", path.join(__dirname, "views"));
 
 const PORT = 3001;
-<<<<<<< HEAD
-
-app.use(express.json({ limit: "2mb" }));
-=======
 app.use(cors({
   origin: ["http://localhost:5173"],
   credentials: true,
@@ -141,7 +134,6 @@ function validateSectorCategoria(sectorRaw, categoriaRaw) {
   return { ok: true, sector, categoria };
 }
 
->>>>>>> master
 
 // Page routes (rendered with EJS)
 const pagesRoutes = require("./routes/pages.routes");
@@ -150,8 +142,6 @@ app.use(pagesRoutes);
 // Static assets
 app.use(express.static(path.join(__dirname, "public"), { index: false }));
 
-<<<<<<< HEAD
-=======
 // React (Vite build) servido en paralelo: /app/*
 // - No rompe rutas existentes
 // - Fallback SPA para rutas internas de React Router
@@ -164,7 +154,6 @@ app.get("/app/*", (req, res) => {
   return res.status(404).send("React app no compilada. Ejecutá: npm run client:build");
 });
 
->>>>>>> master
 /* ===============================
    SQLITE
 ================================ */
@@ -210,11 +199,8 @@ const pickExistingDb = () => {
 const dbPath = pickExistingDb();
 console.log("[KM325] DB:", dbPath);
 const db = new sqlite3.Database(dbPath);
-<<<<<<< HEAD
-=======
 app.locals.db = db;
 
->>>>>>> master
 
 // Promise helpers (para endpoints async)
 function allSql(sql, params = []) {
@@ -253,8 +239,6 @@ function sectorKey(v) {
   return normSector(v).toLowerCase();
 }
 
-<<<<<<< HEAD
-=======
 app.get("/api/liquidacion/calendario", async (req, res) => {
   const mes = String(req.query.mes || "").trim();
   const r = monthRange(mes);
@@ -370,7 +354,6 @@ app.get("/api/liquidacion/calendario", async (req, res) => {
   }
 });
 
->>>>>>> master
 // Agrupa nombres de sector usados en el sistema y en la DB
 // - 'MINI' suele ser el Shop (Mini/tienda)
 function sectorGroup(v) {
@@ -565,8 +548,6 @@ db.serialize(() => {
     )
   `);
 
-<<<<<<< HEAD
-=======
   // Usuarios (auth + roles)
  // =========================
 // USUARIOS (AUTH) - tabla + seed
@@ -737,7 +718,6 @@ app.patch("/api/auth/password", requireAuth, (req, res) => {
     )
   `);
 
->>>>>>> master
   db.run(`
     CREATE TABLE IF NOT EXISTS calendario_avisos_cobertura (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -757,8 +737,6 @@ app.patch("/api/auth/password", requireAuth, (req, res) => {
   // Migraciones idempotentes (agregar columnas nuevas sin romper DB existente)
   addColumnIfMissing("empleados", "categoria", "categoria TEXT");
   addColumnIfMissing("empleados", "fecha_ingreso", "fecha_ingreso TEXT");
-<<<<<<< HEAD
-=======
   // Ficha de ingreso (datos personales)
   addColumnIfMissing("empleados", "cuil", "cuil TEXT");
   addColumnIfMissing("empleados", "dni", "dni TEXT");
@@ -784,7 +762,6 @@ app.patch("/api/auth/password", requireAuth, (req, res) => {
   addColumnIfMissing("empleados", "talle_camisa", "talle_camisa TEXT");
   addColumnIfMissing("empleados", "numero_botines", "numero_botines TEXT");
 
->>>>>>> master
   addColumnIfMissing(
     "calendario_excepciones",
     "sector_override",
@@ -1082,8 +1059,6 @@ app.patch("/api/auth/password", requireAuth, (req, res) => {
   );
   feriados2026.forEach((row) => stmtF.run(row));
   stmtF.finalize();
-<<<<<<< HEAD
-=======
 
   // Seed usuario admin si no existe ninguno
   db.get("SELECT COUNT(*) AS c FROM usuarios", [], (err, row) => {
@@ -1165,7 +1140,6 @@ app.patch("/api/usuarios/:id", requireRole(["ADMIN"]), (req, res) => {
     if (err) return res.status(500).json({ error: "DB error" });
     res.json({ ok: true });
   });
->>>>>>> master
 });
 
 /* ===============================
@@ -1310,8 +1284,6 @@ app.post("/api/asistencias/confirmar", (req, res) => {
     return res.status(400).json({ ok: false, error: "Formato inválido" });
   }
 
-<<<<<<< HEAD
-=======
   // IMPORTANTE:
   // El import puede traer varios días mezclados y en la UI el usuario puede
   // ordenar la tabla. Si procesamos "tal como llega", puede suceder que una
@@ -1360,7 +1332,6 @@ app.post("/api/asistencias/confirmar", (req, res) => {
     return s;
   };
 
->>>>>>> master
   let insertados = 0;
   let ignorados = 0;
   let abiertas_creadas = 0;
@@ -1374,9 +1345,6 @@ app.post("/api/asistencias/confirmar", (req, res) => {
     VALUES (?,?,?,?,?,?,?,?,?,?)
   `);
 
-<<<<<<< HEAD
-  const items = registros.slice();
-=======
   // Copia + orden cronológico estable
   const items = registros.slice().sort((a, b) => {
     const fa = normISODateLocal(a.fecha || a.fecha_entrada || "");
@@ -1390,7 +1358,6 @@ app.post("/api/asistencias/confirmar", (req, res) => {
     // desempate: legajo
     return String(a.legajo || "").localeCompare(String(b.legajo || ""), "es");
   });
->>>>>>> master
 
   function next() {
     const r = items.shift();
@@ -1798,37 +1765,24 @@ app.post("/api/asistencias/confirmar", (req, res) => {
 /* ===============================
    ABM EMPLEADOS (API)
 ================================ */
-<<<<<<< HEAD
-app.get("/api/empleados", (req, res) => {
-=======
 app.get("/api/empleados", requireRole(["ADMIN","SUPERVISOR"]), (req, res) => {
->>>>>>> master
   db.all("SELECT * FROM empleados ORDER BY legajo", [], (e, rows) => {
     if (e) return res.status(500).json({ error: "DB error" });
     res.json(rows || []);
   });
 });
 
-<<<<<<< HEAD
-app.post("/api/empleados", (req, res) => {
-  const { legajo, nombre, sector, puesto, categoria, fecha_ingreso } =
-=======
 app.post("/api/empleados", requireRole(["ADMIN"]), (req, res) => {
   const { legajo, nombre, sector, puesto, categoria, fecha_ingreso, ...rest } =
->>>>>>> master
     req.body || {};
   const L = normLegajo(legajo);
   if (!L) return res.status(400).json({ error: "Falta legajo" });
 
-<<<<<<< HEAD
-  const cat = String(categoria || "").trim();
-=======
   // Sector + categoría (compatibilidad: si no viene "categoria", usamos "puesto")
   const catIn = String((categoria ?? puesto) || "").trim();
   const v = validateSectorCategoria(sector, catIn);
   if (!v.ok) return res.status(400).json({ error: v.error });
 
->>>>>>> master
   const fi = String(fecha_ingreso || "").trim();
   const fiOk = !fi || /^\d{4}-\d{2}-\d{2}$/.test(fi);
   if (!fiOk)
@@ -1841,15 +1795,9 @@ app.post("/api/empleados", requireRole(["ADMIN"]), (req, res) => {
     [
       L,
       String(nombre || ""),
-<<<<<<< HEAD
-      String(sector || ""),
-      String(puesto || ""),
-      cat,
-=======
       v.sector,
       v.categoria,
       v.categoria,
->>>>>>> master
       fi,
     ],
     (err) => {
@@ -1859,11 +1807,7 @@ app.post("/api/empleados", requireRole(["ADMIN"]), (req, res) => {
   );
 });
 
-<<<<<<< HEAD
-app.delete("/api/empleados/:legajo", (req, res) => {
-=======
 app.delete("/api/empleados/:legajo", requireRole(["ADMIN"]), (req, res) => {
->>>>>>> master
   const L = normLegajo(req.params.legajo);
   db.run("DELETE FROM empleados WHERE legajo=?", [L], (err) => {
     if (err) return res.status(500).json({ ok: false, error: "DB error" });
@@ -1871,8 +1815,6 @@ app.delete("/api/empleados/:legajo", requireRole(["ADMIN"]), (req, res) => {
   });
 });
 
-<<<<<<< HEAD
-=======
 
 /* ============
    EMPLEADOS (DETALLE + FAMILIARES)
@@ -1958,7 +1900,6 @@ app.put("/api/empleados/:legajo/familiares", requireRole(["ADMIN"]), (req, res) 
   });
 });
 
->>>>>>> master
 /* ===============================
    PUESTOS / HORARIOS (API)
    Tabla: puesto_horarios
@@ -2580,8 +2521,6 @@ app.get("/api/arqueos", (req, res) => {
   );
 });
 
-<<<<<<< HEAD
-=======
 // Detalle de arqueos asignados por empleado en un mes (para liquidación)
 app.get("/api/arqueos/empleado", (req, res) => {
   const legajo = String(req.query.legajo || "").trim();
@@ -2616,7 +2555,6 @@ app.get("/api/arqueos/empleado", (req, res) => {
   });
 });
 
->>>>>>> master
 /* ===============================
    FERIADOS
 ================================ */
@@ -3787,11 +3725,6 @@ app.get("/api/liquidacion", (req, res) => {
                                 );
                                 diasSet.delete("");
 
-<<<<<<< HEAD
-                                try {
-                                  const exRows = await allSql(
-                                    `SELECT fecha
-=======
                                 const { francos, francoDates } =
                                   await contarCalendarioEmpleadoEnRango(
                                     leg,
@@ -3807,7 +3740,6 @@ app.get("/api/liquidacion", (req, res) => {
                                 try {
                                   const exRows = await allSql(
                                     `SELECT fecha, tipo
->>>>>>> master
                                FROM calendario_excepciones
                                WHERE legajo = ?
                                  AND fecha BETWEEN ? AND ?
@@ -3819,9 +3751,6 @@ app.get("/api/liquidacion", (req, res) => {
                                       0,
                                       10,
                                     );
-<<<<<<< HEAD
-                                    if (f) diasSet.add(f);
-=======
                                     const t = String(ex.tipo || "")
                                       .trim()
                                       .toUpperCase();
@@ -3831,17 +3760,13 @@ app.get("/api/liquidacion", (req, res) => {
                                       (t === "FRANCO" || t === "FRANCO_EXTRA")
                                     )
                                       francoSet.add(f);
->>>>>>> master
                                   }
                                 } catch (e) {
                                   // si algo falla, no rompemos la liquidación
                                 }
 
                                 const diasTrab = diasSet.size;
-<<<<<<< HEAD
-=======
                                 const diasFranco = francoSet.size;
->>>>>>> master
 
                                 // Noches por turno (únicos por fecha)
                                 const nochesSet = new Set();
@@ -3921,10 +3846,7 @@ app.get("/api/liquidacion", (req, res) => {
                                   categoria: cat,
                                   fecha_ingreso: emp.fecha_ingreso,
                                   dias_trabajados: diasTrab,
-<<<<<<< HEAD
-=======
                                   dias_franco: diasFranco,
->>>>>>> master
                                   noches_turnos: nochesTurnos,
                                   feriados_trabajados: feriadosTrab,
                                   tardanzas,
