@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import api from "../lib/api";
 
-const CONFIRMAR_MIGRADO = true; // ✅ ya lo activamos
+const LEGACY_ORIGIN = import.meta.env.DEV ? "http://localhost:3001" : "";
 
 const TURNOS_PLAYA = ["mañana", "tarde", "noche"];
 const TURNOS_SHOP = ["mañana", "tarde"];
@@ -14,7 +14,10 @@ function toISODate(d) {
 function formatMoneyCell(n) {
   const num = Number(n);
   if (!Number.isFinite(num)) return "";
-  return num.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return num.toLocaleString("es-AR", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
 }
 
 function parseMoneyToNumber(v) {
@@ -65,7 +68,7 @@ export default function Arqueos() {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [confirming, setConfirming] = useState(false);
-
+  const [confirmado, setConfirmado] = useState(false);
   const [items, setItems] = useState([]);
   const [propuestas, setPropuestas] = useState([]);
   const [error, setError] = useState("");
@@ -76,7 +79,13 @@ export default function Arqueos() {
     return s === "playa" ? "Playa" : s === "shop" ? "Shop" : s;
   }
   function prettyTurno(t) {
-    return t === "mañana" ? "Mañana" : t === "tarde" ? "Tarde" : t === "noche" ? "Noche" : t;
+    return t === "mañana"
+      ? "Mañana"
+      : t === "tarde"
+        ? "Tarde"
+        : t === "noche"
+          ? "Noche"
+          : t;
   }
 
   const [form, setForm] = useState({
@@ -89,7 +98,8 @@ export default function Arqueos() {
 
   function toggleSort(key) {
     setSort((prev) => {
-      if (prev.key === key) return { key, dir: prev.dir === "asc" ? "desc" : "asc" };
+      if (prev.key === key)
+        return { key, dir: prev.dir === "asc" ? "desc" : "asc" };
       return { key, dir: "asc" };
     });
   }
@@ -109,8 +119,8 @@ export default function Arqueos() {
       prev.map((p) =>
         propuestaKey(p) === key
           ? { ...p, monto_final_input: rawValue } // string temporal
-          : p
-      )
+          : p,
+      ),
     );
   }
 
@@ -121,7 +131,7 @@ export default function Arqueos() {
         const raw = p.monto_final_input ?? "";
         const parsed = parseMoneyToNumber(raw);
         return { ...p, monto_final: parsed, monto_final_input: undefined };
-      })
+      }),
     );
   }
 
@@ -131,7 +141,8 @@ export default function Arqueos() {
 
     const getNumFinal = (p) => {
       // si está editando, calculamos usando el input raw
-      if (p.monto_final_input !== undefined) return parseMoneyToNumber(p.monto_final_input);
+      if (p.monto_final_input !== undefined)
+        return parseMoneyToNumber(p.monto_final_input);
       return Number(p.monto_final ?? p.monto_propuesto ?? 0);
     };
 
@@ -162,7 +173,8 @@ export default function Arqueos() {
       const va = getValue(a);
       const vb = getValue(b);
 
-      if (typeof va === "number" && typeof vb === "number") return (va - vb) * dirMul;
+      if (typeof va === "number" && typeof vb === "number")
+        return (va - vb) * dirMul;
       return String(va).localeCompare(String(vb), "es") * dirMul;
     });
   }, [propuestas, sort]);
@@ -186,7 +198,8 @@ export default function Arqueos() {
 
   async function guardarYCalcularSector(sectorApi) {
     const { turnos, hasAnyMonto, hasObs } = buildTurnosPayload(sectorApi);
-    if (!hasAnyMonto && !hasObs) return { ok: true, arqueos: [], propuestas: [] };
+    if (!hasAnyMonto && !hasObs)
+      return { ok: true, arqueos: [], propuestas: [] };
 
     const payload = { fecha, sector: sectorApi, turnos };
     const res = await api.post("/api/arqueos/guardar-y-calcular", payload);
@@ -199,7 +212,7 @@ export default function Arqueos() {
     try {
       setError("");
       setSaving(true);
-
+setConfirmado(false);
       const r1 = await guardarYCalcularSector("playa");
       const r2 = await guardarYCalcularSector("shop");
 
@@ -207,7 +220,10 @@ export default function Arqueos() {
       const props = [...(r1.propuestas || []), ...(r2.propuestas || [])];
 
       // limpiamos posibles inputs temporales
-      const propsClean = props.map((p) => ({ ...p, monto_final_input: undefined }));
+      const propsClean = props.map((p) => ({
+        ...p,
+        monto_final_input: undefined,
+      }));
 
       setItems(arqueos);
       setPropuestas(propsClean);
@@ -235,20 +251,30 @@ export default function Arqueos() {
       const arqueos = Array.isArray(res.arqueos) ? res.arqueos : [];
       setItems(arqueos);
 
+      // Si el backend devuelve propuestas en GET, las cargamos (para no depender de "Guardar y calcular")
+      if (Array.isArray(res.propuestas)) {
+        const propsClean = res.propuestas.map((p) => ({
+          ...p,
+          monto_final_input: undefined,
+        }));
+        setPropuestas(propsClean);
+      }
+
       const next = {
         Playa: { mañana: "", tarde: "", noche: "", observaciones: "" },
         Shop: { mañana: "", tarde: "", observaciones: "" },
       };
 
       for (const it of arqueos) {
-        if (!next[it.sector]) continue;
+        const sKey = prettySector(it.sector);
+        if (!next[sKey]) continue;
         if (it.turno && it.turno !== "obs") {
-          next[it.sector][it.turno] =
+          next[sKey][it.turno] =
             it.monto_diferencia === null || it.monto_diferencia === undefined
               ? ""
               : String(it.monto_diferencia);
         }
-        if (it.observaciones) next[it.sector].observaciones = it.observaciones;
+        if (it.observaciones) next[sKey].observaciones = it.observaciones;
       }
 
       setForm(next);
@@ -277,12 +303,14 @@ export default function Arqueos() {
 
   // ✅ Control por sector/turno (objetivo vs asignado)
   const controlPorTurno = useMemo(() => {
-    const key = (sector, turno) => `${sector}__${turno}`;
+    const normSector = (s) => (s || "").toString().trim().toLowerCase();
+    const normTurno = (t) => (t || "").toString().trim().toLowerCase();
+    const key = (sector, turno) => `${normSector(sector)}__${normTurno(turno)}`;
 
     const objetivos = new Map();
     for (const it of items) {
       if (!it?.sector || !it?.turno) continue;
-      if (it.turno === "obs") continue;
+      if (normTurno(it.turno) === "obs") continue;
       objetivos.set(key(it.sector, it.turno), Number(it.monto_diferencia || 0));
     }
 
@@ -297,8 +325,14 @@ export default function Arqueos() {
       asignados.set(k, (asignados.get(k) || 0) + v);
     }
 
-    const keys = new Set([...objetivos.keys(), ...asignados.keys()]);
-    const rows = [...keys].map((k) => {
+    // debug opcional: detectar propuestas "fuera" de los turnos objetivos
+    for (const k of asignados.keys()) {
+      if (!objetivos.has(k))
+        console.warn("⚠️ Propuesta fuera de objetivos:", k);
+    }
+
+    // ✅ rows SOLO para los objetivos (no mostramos filas fantasma)
+    const rows = [...objetivos.keys()].map((k) => {
       const [sector, turno] = k.split("__");
       const objetivo = objetivos.get(k) ?? 0;
       const asignado = asignados.get(k) ?? 0;
@@ -319,18 +353,47 @@ export default function Arqueos() {
 
     return rows;
   }, [items, propuestas]);
-
+  // ✅ Confirmar: enviamos asignaciones finales (backend espera 1 arqueo_id por request)
+  // ✅ bandera de descuadre (si no tenés el control armado todavía, no bloquea)
   const hayDescuadre = useMemo(() => {
-    const tol = 0.01;
-    return controlPorTurno.some((r) => Math.abs(r.diff) > tol);
-  }, [controlPorTurno]);
+    // si todavía no hay propuestas/control, no bloqueamos confirmar
+    if (!Array.isArray(propuestas) || propuestas.length === 0) return false;
 
-  // ✅ Confirmar: enviamos asignaciones finales
+    // agrupamos por sector/turno y comparamos contra el objetivo
+    // OJO: esto asume que en `items` tenés el objetivo por sector/turno en `monto_diferencia`
+    const norm = (x) => (x || "").toString().trim().toLowerCase();
+    const key = (s, t) => `${norm(s)}__${norm(t)}`;
+
+    const objetivos = new Map();
+    for (const it of items || []) {
+      if (!it?.sector || !it?.turno) continue;
+      if (norm(it.turno) === "obs") continue;
+      objetivos.set(key(it.sector, it.turno), Number(it.monto_diferencia || 0));
+    }
+
+    const asignados = new Map();
+    for (const p of propuestas) {
+      const k = key(p.sector, p.turno);
+      const v =
+        p.monto_final_input !== undefined
+          ? parseMoneyToNumber(p.monto_final_input)
+          : Number(p.monto_final ?? p.monto_propuesto ?? 0);
+
+      asignados.set(k, (asignados.get(k) || 0) + (Number.isFinite(v) ? v : 0));
+    }
+
+    const tol = 0.01;
+    for (const [k, objetivo] of objetivos.entries()) {
+      const asignado = asignados.get(k) ?? 0;
+      if (Math.abs(asignado - objetivo) > tol) return true;
+    }
+    return false;
+  }, [items, propuestas]);
+
   async function confirmar() {
     if (confirming || saving || loading) return;
     if (!propuestas?.length) return;
 
-    // opcional: evitar confirmar si descuadra
     if (hayDescuadre) {
       setError("⚠️ No podés confirmar: hay turnos descuadrados.");
       return;
@@ -340,28 +403,56 @@ export default function Arqueos() {
       setError("");
       setConfirming(true);
 
-      // armamos propuestas con monto_final NUMÉRICO (si hay input en edición, lo parseamos)
-      const payloadPropuestas = propuestas.map((p) => ({
-        arqueo_id: p.arqueo_id,
-        sector: p.sector,
-        turno: p.turno,
-        legajo: p.legajo,
-        monto_final:
+      // armamos asignaciones por arqueo_id (API: { arqueo_id, asignaciones: [...] })
+      const byArqueo = new Map();
+      for (const p of propuestas) {
+        const id = Number(p.arqueo_id);
+        if (!id) continue;
+
+        const montoFinal =
           p.monto_final_input !== undefined
             ? parseMoneyToNumber(p.monto_final_input)
-            : Number(p.monto_final ?? p.monto_propuesto ?? 0),
-      }));
+            : Number(p.monto_final ?? p.monto_propuesto ?? 0);
 
-      // 👇 si tu backend espera otro nombre, cambialo acá
-      const payloadConfirmar = {
-        fecha,
-        propuestas: payloadPropuestas,
-      };
+        const row = {
+          legajo: p.legajo,
+          nombre: p.nombre,
+          puesto: p.puesto,
+          minutos: p.minutos,
+          monto_propuesto: p.monto_propuesto,
+          monto_final: montoFinal,
+        };
 
-      const res = await api.post("/api/arqueos/confirmar", payloadConfirmar);
-      if (!res?.ok) throw new Error(res?.error || "Error");
+        if (!byArqueo.has(id)) byArqueo.set(id, []);
+        byArqueo.get(id).push(row);
+      }
 
-      setError(res?.message || `✅ Confirmado. Guardadas: ${res?.guardadas ?? "-"}`);
+      const ids = Array.from(byArqueo.keys());
+      if (!ids.length) {
+        throw new Error("Faltan datos: no hay arqueo_id en las propuestas.");
+      }
+
+      // confirmamos uno por uno (el endpoint borra e inserta por arqueo_id)
+      let total = 0;
+      for (const id of ids) {
+        const asignaciones = byArqueo.get(id) || [];
+        const res = await api.post("/api/arqueos/confirmar", {
+          arqueo_id: id,
+          asignaciones,
+        });
+        if (!res?.ok) throw new Error(res?.error || "Error");
+        total += Number(res?.guardadas || 0);
+      }
+
+      setError(`✅ Confirmado. Guardadas: ${total}`);
+
+      // refrescar estado luego de confirmar
+      setConfirmado(true);
+await load();
+
+// ✅ limpiar pestaña: ocultar propuestas luego de confirmar
+// (se regeneran cuando tocás "Guardar y calcular")
+setPropuestas([]);
     } catch (e) {
       console.error(e);
       setError(e?.message || "Error confirmando");
@@ -399,9 +490,15 @@ export default function Arqueos() {
     return () => mq.removeEventListener?.("change", onChange);
   }, []);
 
-  const gridResponsive = isNarrow ? { ...grid2cols, gridTemplateColumns: "1fr" } : grid2cols;
-  const playaResponsive = isNarrow ? { ...turnosPlayaGrid, gridTemplateColumns: "1fr" } : turnosPlayaGrid;
-  const shopResponsive = isNarrow ? { ...turnosShopGrid, gridTemplateColumns: "1fr" } : turnosShopGrid;
+  const gridResponsive = isNarrow
+    ? { ...grid2cols, gridTemplateColumns: "1fr" }
+    : grid2cols;
+  const playaResponsive = isNarrow
+    ? { ...turnosPlayaGrid, gridTemplateColumns: "1fr" }
+    : turnosPlayaGrid;
+  const shopResponsive = isNarrow
+    ? { ...turnosShopGrid, gridTemplateColumns: "1fr" }
+    : turnosShopGrid;
 
   return (
     <div>
@@ -409,7 +506,12 @@ export default function Arqueos() {
 
       <div
         className="card"
-        style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}
+        style={{
+          display: "flex",
+          gap: 12,
+          alignItems: "center",
+          flexWrap: "wrap",
+        }}
       >
         <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <span>Fecha</span>
@@ -425,25 +527,32 @@ export default function Arqueos() {
           {loading ? "Cargando..." : "Cargar"}
         </button>
 
-        <button className="btn" onClick={guardarYCalcular} disabled={loading || saving}>
+        <button
+          className="btn"
+          onClick={guardarYCalcular}
+          disabled={loading || saving}
+        >
           {saving ? "Guardando..." : "Guardar y calcular"}
         </button>
 
-        <a className="btn btn-secondary" href="http://localhost:3001/arqueos" target="_blank" rel="noreferrer">
+        <a
+          className="btn btn-secondary"
+          href={`${LEGACY_ORIGIN}/arqueos`}
+          target="_blank"
+          rel="noreferrer"
+        >
           Abrir versión legacy
         </a>
 
         {propuestas.length > 0 && (
           <button
             className="btn"
-            onClick={CONFIRMAR_MIGRADO ? confirmar : undefined}
-            disabled={!CONFIRMAR_MIGRADO || loading || saving || confirming || hayDescuadre}
+            onClick={confirmar}
+            disabled={loading || saving || confirming || hayDescuadre}
             title={
               hayDescuadre
                 ? "No se puede confirmar si hay turnos descuadrados"
-                : !CONFIRMAR_MIGRADO
-                  ? "Confirmar todavía usa lógica legacy (pendiente de migración)"
-                  : ""
+                : ""
             }
           >
             {confirming ? "Confirmando..." : "Confirmar"}
@@ -462,19 +571,32 @@ export default function Arqueos() {
             {TURNOS_PLAYA.map((t) => (
               <FieldEdit
                 key={t}
-                label={t === "mañana" ? "Mañana (05-13)" : t === "tarde" ? "Tarde (13-21)" : "Noche (21-05)"}
+                label={
+                  t === "mañana"
+                    ? "Mañana (05-13)"
+                    : t === "tarde"
+                      ? "Tarde (13-21)"
+                      : "Noche (21-05)"
+                }
                 value={form.Playa[t]}
-                onChange={(v) => setForm((f) => ({ ...f, Playa: { ...f.Playa, [t]: v } }))}
+                onChange={(v) =>
+                  setForm((f) => ({ ...f, Playa: { ...f.Playa, [t]: v } }))
+                }
               />
             ))}
 
             <div style={{ gridColumn: isNarrow ? "auto" : "1 / -1" }}>
               <label style={{ display: "block", marginTop: 0 }}>
-                <div style={{ opacity: 0.8, marginBottom: 6 }}>Observaciones</div>
+                <div style={{ opacity: 0.8, marginBottom: 6 }}>
+                  Observaciones
+                </div>
                 <input
                   value={form.Playa.observaciones}
                   onChange={(e) =>
-                    setForm((f) => ({ ...f, Playa: { ...f.Playa, observaciones: e.target.value } }))
+                    setForm((f) => ({
+                      ...f,
+                      Playa: { ...f.Playa, observaciones: e.target.value },
+                    }))
                   }
                   style={{ width: "100%" }}
                 />
@@ -497,17 +619,24 @@ export default function Arqueos() {
                 key={t}
                 label={t === "mañana" ? "Mañana (06-14)" : "Tarde (14-22)"}
                 value={form.Shop[t]}
-                onChange={(v) => setForm((f) => ({ ...f, Shop: { ...f.Shop, [t]: v } }))}
+                onChange={(v) =>
+                  setForm((f) => ({ ...f, Shop: { ...f.Shop, [t]: v } }))
+                }
               />
             ))}
 
             <div style={{ gridColumn: isNarrow ? "auto" : "1 / -1" }}>
               <label style={{ display: "block" }}>
-                <div style={{ opacity: 0.8, marginBottom: 6 }}>Observaciones</div>
+                <div style={{ opacity: 0.8, marginBottom: 6 }}>
+                  Observaciones
+                </div>
                 <input
                   value={form.Shop.observaciones}
                   onChange={(e) =>
-                    setForm((f) => ({ ...f, Shop: { ...f.Shop, observaciones: e.target.value } }))
+                    setForm((f) => ({
+                      ...f,
+                      Shop: { ...f.Shop, observaciones: e.target.value },
+                    }))
                   }
                   style={{ width: "100%" }}
                 />
@@ -545,7 +674,14 @@ export default function Arqueos() {
           </tbody>
         </table>
       </div>
-
+{confirmado && propuestas.length === 0 && (
+  <div className="card" style={{ marginTop: 16 }}>
+    <strong style={{ color: "#7CFC98" }}>✅ Confirmado.</strong>
+    <div className="muted" style={{ marginTop: 6 }}>
+      Para generar nuevas propuestas, tocá “Guardar y calcular”.
+    </div>
+  </div>
+)}
       {/* Propuestas */}
       {propuestas.length > 0 && (
         <div className="card" style={{ marginTop: 16 }}>
@@ -559,16 +695,20 @@ export default function Arqueos() {
                   borderRadius: 12,
                   marginBottom: 10,
                   border: "1px solid rgba(255,255,255,0.10)",
-                  background: hayDescuadre ? "rgba(255, 107, 107, 0.10)" : "rgba(124, 252, 152, 0.08)",
+                  background: hayDescuadre
+                    ? "rgba(255, 107, 107, 0.10)"
+                    : "rgba(124, 252, 152, 0.08)",
                 }}
               >
                 {hayDescuadre ? (
                   <strong style={{ color: "#ff6b6b" }}>
-                    ⚠️ Hay turnos descuadrados: la suma de “$ Final” no coincide con el monto del turno.
+                    ⚠️ Hay turnos descuadrados: la suma de “$ Final” no coincide
+                    con el monto del turno.
                   </strong>
                 ) : (
                   <strong style={{ color: "#7CFC98" }}>
-                    ✅ Todo cuadra: la distribución coincide con el monto de cada turno.
+                    ✅ Todo cuadra: la distribución coincide con el monto de
+                    cada turno.
                   </strong>
                 )}
               </div>
@@ -592,11 +732,14 @@ export default function Arqueos() {
                     </strong>
 
                     <span style={{ marginLeft: 10, opacity: 0.85 }}>
-                      Objetivo: {formatMoneyCell(r.objetivo)} | Asignado: {formatMoneyCell(r.asignado)}
+                      Objetivo: {formatMoneyCell(r.objetivo)} | Asignado:{" "}
+                      {formatMoneyCell(r.asignado)}
                     </span>
 
                     {ok ? (
-                      <span style={{ marginLeft: 10, color: "#7CFC98" }}>✅ Cuadra</span>
+                      <span style={{ marginLeft: 10, color: "#7CFC98" }}>
+                        ✅ Cuadra
+                      </span>
                     ) : (
                       <span style={{ marginLeft: 10, color: "#ff6b6b" }}>
                         {r.diff > 0
@@ -614,25 +757,46 @@ export default function Arqueos() {
             <table className="table" style={{ width: "100%" }}>
               <thead>
                 <tr>
-                  <th style={{ cursor: "pointer" }} onClick={() => toggleSort("sector")}>
+                  <th
+                    style={{ cursor: "pointer" }}
+                    onClick={() => toggleSort("sector")}
+                  >
                     Sector{sortIndicator("sector")}
                   </th>
-                  <th style={{ cursor: "pointer" }} onClick={() => toggleSort("turno")}>
+                  <th
+                    style={{ cursor: "pointer" }}
+                    onClick={() => toggleSort("turno")}
+                  >
                     Turno{sortIndicator("turno")}
                   </th>
-                  <th style={{ cursor: "pointer" }} onClick={() => toggleSort("legajo")}>
+                  <th
+                    style={{ cursor: "pointer" }}
+                    onClick={() => toggleSort("legajo")}
+                  >
                     Legajo{sortIndicator("legajo")}
                   </th>
-                  <th style={{ cursor: "pointer" }} onClick={() => toggleSort("nombre")}>
+                  <th
+                    style={{ cursor: "pointer" }}
+                    onClick={() => toggleSort("nombre")}
+                  >
                     Nombre{sortIndicator("nombre")}
                   </th>
-                  <th style={{ cursor: "pointer" }} onClick={() => toggleSort("minutos")}>
+                  <th
+                    style={{ cursor: "pointer" }}
+                    onClick={() => toggleSort("minutos")}
+                  >
                     Minutos{sortIndicator("minutos")}
                   </th>
-                  <th style={{ cursor: "pointer" }} onClick={() => toggleSort("propuesto")}>
+                  <th
+                    style={{ cursor: "pointer" }}
+                    onClick={() => toggleSort("propuesto")}
+                  >
                     $ Propuesto{sortIndicator("propuesto")}
                   </th>
-                  <th style={{ cursor: "pointer" }} onClick={() => toggleSort("final")}>
+                  <th
+                    style={{ cursor: "pointer" }}
+                    onClick={() => toggleSort("final")}
+                  >
                     $ Final{sortIndicator("final")}
                   </th>
                 </tr>
@@ -644,7 +808,7 @@ export default function Arqueos() {
                   const valueShown =
                     p.monto_final_input !== undefined
                       ? p.monto_final_input
-                      : (p.monto_final === null || p.monto_final === undefined)
+                      : p.monto_final === null || p.monto_final === undefined
                         ? ""
                         : String(p.monto_final);
 
@@ -659,7 +823,9 @@ export default function Arqueos() {
                       <td style={{ minWidth: 160 }}>
                         <input
                           value={valueShown}
-                          onChange={(e) => updatePropuestaFinalInputByKey(k, e.target.value)}
+                          onChange={(e) =>
+                            updatePropuestaFinalInputByKey(k, e.target.value)
+                          }
                           onBlur={() => commitPropuestaFinalByKey(k)}
                           inputMode="decimal"
                           placeholder="0"
@@ -674,7 +840,8 @@ export default function Arqueos() {
           </div>
 
           <div className="muted" style={{ marginTop: 8 }}>
-            (Edición local: todavía no guarda ni confirma si no apretás “Confirmar”.)
+            (Edición local: todavía no guarda ni confirma si no apretás
+            “Confirmar”.)
           </div>
         </div>
       )}
