@@ -960,6 +960,90 @@ app.patch("/api/auth/password", requireAuth, (req, res) => {
   addColumnIfMissing("puesto_horarios", "patron_id", "patron_id INTEGER");
   addColumnIfMissing("puesto_horarios", "patron_inicio", "patron_inicio TEXT");
 
+  // Catálogo de puestos (migración React): metadatos por puesto
+  // - sector: PLAYA/SHOP/ADMINISTRACIÓN (normalizado)
+  // - activo: 1/0
+  // - patron_texto: descripción humana del patrón de turnos
+  Promise.all([
+    addColumnIfMissing("puesto_horarios", "sector", "sector TEXT"),
+    addColumnIfMissing("puesto_horarios", "activo", "activo INTEGER DEFAULT 1"),
+    addColumnIfMissing("puesto_horarios", "patron_texto", "patron_texto TEXT"),
+  ]).then(() => {
+    // Seed inicial de puestos/horarios por sector (idempotente)
+    const seeds = [
+      {
+        sector: 'PLAYA',
+        puesto: 'Playero/a',
+        manana_start: 5*60, manana_end: 13*60,
+        tarde_start: 13*60, tarde_end: 21*60,
+        noche_start: 21*60, noche_end: 29*60,
+        patron_texto: '5 mañanas + 1 Franco / 5 tardes + 1 Franco / 5 noches + 3 Francos',
+      },
+      {
+        sector: 'PLAYA',
+        puesto: 'Auxiliar de playa',
+        manana_start: 6*60, manana_end: 14*60,
+        tarde_start: 14*60, tarde_end: 22*60,
+        noche_start: null, noche_end: null,
+        patron_texto: '5 mañanas (lun a vie) + 1 turno (sab o dom) / 5 tardes (lun a vie) + 1 turno (sab o dom)',
+      },
+      {
+        sector: 'PLAYA',
+        puesto: 'Refuerzo de playa',
+        manana_start: 9*60, manana_end: 13*60,
+        tarde_start: 17*60, tarde_end: 21*60,
+        noche_start: null, noche_end: null,
+        patron_texto: '',
+      },
+      {
+        sector: 'SHOP',
+        puesto: 'Cajero/a',
+        manana_start: 6*60, manana_end: 14*60,
+        tarde_start: 14*60, tarde_end: 22*60,
+        noche_start: null, noche_end: null,
+        patron_texto: '4 mañanas + 2 francos / 4 tardes + 2 francos',
+      },
+      {
+        sector: 'SHOP',
+        puesto: 'Auxiliar de shop',
+        manana_start: 6*60, manana_end: 14*60,
+        tarde_start: null, tarde_end: null,
+        noche_start: null, noche_end: null,
+        patron_texto: '5 mañanas (lun a vie) + 1 turno (sab o dom)',
+      },
+    ];
+    const stmt = db.prepare(`
+      INSERT INTO puesto_horarios (puesto, sector, activo, patron_texto, manana_start, manana_end, tarde_start, tarde_end, noche_start, noche_end)
+      VALUES (?,?,?,?,?,?,?,?,?,?)
+      ON CONFLICT(puesto) DO UPDATE SET
+        sector=COALESCE(excluded.sector, puesto_horarios.sector),
+        activo=COALESCE(excluded.activo, puesto_horarios.activo),
+        patron_texto=COALESCE(NULLIF(excluded.patron_texto,''), puesto_horarios.patron_texto),
+        manana_start=COALESCE(excluded.manana_start, puesto_horarios.manana_start),
+        manana_end=COALESCE(excluded.manana_end, puesto_horarios.manana_end),
+        tarde_start=COALESCE(excluded.tarde_start, puesto_horarios.tarde_start),
+        tarde_end=COALESCE(excluded.tarde_end, puesto_horarios.tarde_end),
+        noche_start=COALESCE(excluded.noche_start, puesto_horarios.noche_start),
+        noche_end=COALESCE(excluded.noche_end, puesto_horarios.noche_end)
+    `);
+    for (const s of seeds) {
+      stmt.run([
+        s.puesto,
+        s.sector,
+        1,
+        s.patron_texto,
+        s.manana_start,
+        s.manana_end,
+        s.tarde_start,
+        s.tarde_end,
+        s.noche_start,
+        s.noche_end,
+      ]);
+    }
+    stmt.finalize();
+  }).catch(() => {});
+
+
   // ==========================
   // CALENDARIO: patrones + excepciones
   // ==========================
@@ -1905,12 +1989,24 @@ app.put("/api/empleados/:legajo/familiares", requireRole(["ADMIN"]), (req, res) 
    Tabla: puesto_horarios
 ================================ */
 app.get("/api/puestos/catalogo", (req, res) => {
+  const sectorQ = normalizeSector(req.query.sector || "");
+  const onlyActive = String(req.query.include_inactive || "").trim() ? 0 : 1;
+
+  const where = [];
+  const params = [];
+  if (onlyActive) where.push("(ph.activo IS NULL OR ph.activo = 1)");
+  if (sectorQ) {
+    where.push("(UPPER(TRIM(ph.sector)) = ?)");
+    params.push(sectorQ);
+  }
+  const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+
   db.all(
-    `SELECT DISTINCT TRIM(puesto) AS puesto
-     FROM empleados
-     WHERE puesto IS NOT NULL AND TRIM(puesto) <> ''
-     ORDER BY TRIM(puesto)`,
-    [],
+    `SELECT DISTINCT TRIM(ph.puesto) AS puesto
+     FROM puesto_horarios ph
+     ${whereSql}
+     ORDER BY TRIM(ph.puesto)`,
+    params,
     (err, rows) => {
       if (err) return res.status(500).json({ ok: false, error: "DB error" });
       res.json({ ok: true, items: (rows || []).map((r) => r.puesto) });
@@ -1919,14 +2015,28 @@ app.get("/api/puestos/catalogo", (req, res) => {
 });
 
 app.get("/api/puestos", (req, res) => {
+  const sectorQ = normalizeSector(req.query.sector || "");
+  const includeInactive = String(req.query.include_inactive || "").trim() ? 1 : 0;
+
+  const where = [];
+  const params = [];
+  if (!includeInactive) where.push("(ph.activo IS NULL OR ph.activo = 1)");
+  if (sectorQ) {
+    where.push("(UPPER(TRIM(ph.sector)) = ?)");
+    params.push(sectorQ);
+  }
+  const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+
   db.all(
-    `SELECT ph.puesto, ph.manana_start, ph.manana_end, ph.tarde_start, ph.tarde_end, ph.noche_start, ph.noche_end,
+    `SELECT ph.puesto, ph.sector, ph.activo, ph.patron_texto,
+            ph.manana_start, ph.manana_end, ph.tarde_start, ph.tarde_end, ph.noche_start, ph.noche_end,
             ph.patron_id, ph.patron_inicio,
             p.nombre as patron_nombre
      FROM puesto_horarios ph
      LEFT JOIN calendario_patrones p ON p.id = ph.patron_id
-     ORDER BY ph.puesto`,
-    [],
+     ${whereSql}
+     ORDER BY ph.sector, ph.puesto`,
+    params,
     (err, rows) => {
       if (err) return res.status(500).json({ ok: false, error: "DB error" });
 
@@ -1937,6 +2047,9 @@ app.get("/api/puestos", (req, res) => {
         };
         return {
           puesto: r.puesto,
+          sector: r.sector ?? null,
+          activo: r.activo == null ? 1 : Number(r.activo),
+          patron_texto: r.patron_texto ?? "",
           manana_start: r.manana_start,
           manana_end: r.manana_end,
           tarde_start: r.tarde_start,
@@ -1956,10 +2069,12 @@ app.get("/api/puestos", (req, res) => {
     },
   );
 });
-
-app.post("/api/puestos", (req, res) => {
+app.post("/api/puestos", requireRole(["ADMIN"]), (req, res) => {
   const {
     puesto,
+    sector,
+    activo,
+    patron_texto,
     manana_start,
     manana_end,
     tarde_start,
@@ -1971,6 +2086,10 @@ app.post("/api/puestos", (req, res) => {
   } = req.body || {};
   const p = String(puesto || "").trim();
   if (!p) return res.status(400).json({ ok: false, error: "Falta puesto" });
+
+  const sec = sector ? normalizeSector(sector) : null;
+  const act = activo === 0 || activo === "0" ? 0 : 1;
+  const patronTxt = patron_texto != null ? String(patron_texto) : null;
 
   const parseTime = (v) => {
     if (v === null || v === undefined || v === "") return null;
@@ -2002,9 +2121,12 @@ app.post("/api/puestos", (req, res) => {
 
   db.run(
     `
-    INSERT INTO puesto_horarios (puesto, manana_start, manana_end, tarde_start, tarde_end, noche_start, noche_end, patron_id, patron_inicio)
-    VALUES (?,?,?,?,?,?,?,?,?)
+    INSERT INTO puesto_horarios (puesto, sector, activo, patron_texto, manana_start, manana_end, tarde_start, tarde_end, noche_start, noche_end, patron_id, patron_inicio)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
     ON CONFLICT(puesto) DO UPDATE SET
+      sector=excluded.sector,
+      activo=excluded.activo,
+      patron_texto=excluded.patron_texto,
       manana_start=excluded.manana_start,
       manana_end=excluded.manana_end,
       tarde_start=excluded.tarde_start,
@@ -2014,7 +2136,7 @@ app.post("/api/puestos", (req, res) => {
       patron_id=excluded.patron_id,
       patron_inicio=excluded.patron_inicio
     `,
-    [p, ms, me, ts, te, ns, ne, pid, pinicio],
+    [p, sec, act, patronTxt, ms, me, ts, te, ns, ne, pid, pinicio],
     function (err) {
       if (err) return res.status(500).json({ ok: false, error: "DB error" });
       res.json({ ok: true, changes: this.changes });
@@ -2022,7 +2144,8 @@ app.post("/api/puestos", (req, res) => {
   );
 });
 
-app.delete("/api/puestos/:puesto", (req, res) => {
+
+app.delete("/api/puestos/:puesto", requireRole(["ADMIN"]), (req, res) => {
   const p = String(req.params.puesto || "").trim();
   if (!p) return res.status(400).json({ ok: false, error: "Puesto inválido" });
 

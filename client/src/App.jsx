@@ -6,8 +6,9 @@ import Login from './pages/Login.jsx'
 import Dashboard from './pages/Dashboard.jsx'
 import Perfil from './pages/Perfil.jsx'
 import Usuarios from './pages/Usuarios.jsx'
-import Placeholder from './pages/Placeholder.jsx'
 import Arqueos from './pages/Arqueos.jsx'
+import EmpleadosList from './pages/EmpleadosList.jsx'
+import EmpleadoEdit from './pages/EmpleadoEdit.jsx'
 
 function Protected({ roles, children }) {
   const { ready, user } = useAuth()
@@ -41,7 +42,9 @@ export default function App() {
             }
           />
           {/* Pantallas migrables (placeholders) */}
-          <Route path="empleados" element={<Placeholder title="Empleados (próxima migración)" legacyHref="/abm-empleados.html" />} />
+          <Route path="empleados" element={<EmpleadosList />} />
+          <Route path="empleados/nuevo" element={<EmpleadoEdit mode="create" />} />
+          <Route path="empleados/:legajo" element={<EmpleadoEdit mode="edit" />} />
           <Route path="arqueos" element={<Arqueos/>} />
         </Route>
       </Routes>
