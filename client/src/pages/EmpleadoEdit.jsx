@@ -6,7 +6,6 @@ import {
   createEmpleadoBase,
   emptyEmpleado,
   getEmpleado,
-  getPuestosCatalogo,
   legacyEmpleadosUrl,
   normalizeBasicoToNumber,
   patchEmpleado,
@@ -40,6 +39,29 @@ function todayISO() {
   return new Date().toISOString().slice(0, 10);
 }
 
+// UI -> API
+function sectorUiToApi(s) {
+  const v = String(s || "")
+    .trim()
+    .toLowerCase();
+  if (v === "playa") return "PLAYA";
+  if (v === "shop") return "SHOP";
+  const u = String(s || "")
+    .trim()
+    .toUpperCase();
+  if (u === "PLAYA" || u === "SHOP") return u;
+  return "";
+}
+
+// API -> UI
+function sectorApiToUi(s) {
+  const u = String(s || "")
+    .trim()
+    .toUpperCase();
+  if (u === "PLAYA") return "playa";
+  if (u === "SHOP") return "shop";
+  return "";
+}
 
 function emptyFamiliar() {
   return {
@@ -69,15 +91,19 @@ export default function EmpleadoEdit({ mode }) {
   const [notice, setNotice] = useState("");
   const [tab, setTab] = useState("personales");
   const [form, setForm] = useState(emptyEmpleado());
-  const [puestosCatalogo, setPuestosCatalogo] = useState([]);
+
+  // Puestos por sector (desde backend)
   const [puestosItems, setPuestosItems] = useState([]);
   const [puestosLoading, setPuestosLoading] = useState(false);
   const [puestosError, setPuestosError] = useState("");
 
   useEffect(() => {
-    const sector = normalizeSector(form.sector);
-    if (!sector) {
+    const apiSector = sectorUiToApi(form.sector);
+
+    if (!apiSector) {
       setPuestosItems([]);
+      setPuestosError("");
+      setPuestosLoading(false);
       return;
     }
 
@@ -86,11 +112,11 @@ export default function EmpleadoEdit({ mode }) {
     setPuestosError("");
 
     api
-      .get("/puestos", { params: { sector } })
-      .then((r) => {
+      .get(`/api/puestos?sector=${encodeURIComponent(apiSector)}`)
+      .then((data) => {
         if (cancelled) return;
-        const items = Array.isArray(r.data?.items) ? r.data.items : [];
-        setPuestosItems(items.filter((x) => x.activo === 1));
+        const items = Array.isArray(data?.items) ? data.items : [];
+        setPuestosItems(items.filter((x) => Number(x.activo) === 1));
       })
       .catch((e) => {
         if (cancelled) return;
@@ -107,6 +133,10 @@ export default function EmpleadoEdit({ mode }) {
     };
   }, [form.sector]);
 
+  const puestoSel = useMemo(() => {
+    return puestosItems.find((x) => x.puesto === form.puesto) || null;
+  }, [puestosItems, form.puesto]);
+
   const title = isCreate ? "Nuevo empleado" : `Empleado ${legajoParam}`;
 
   async function load() {
@@ -118,7 +148,13 @@ export default function EmpleadoEdit({ mode }) {
       setLoading(true);
       const data = await getEmpleado(legajoParam);
       const emp = { ...emptyEmpleado(), ...(data || {}) };
-      // basico puede venir numérico
+
+      // normalizar sector a valores de UI
+      const uiSector = sectorApiToUi(emp.sector);
+      if (uiSector) emp.sector = uiSector;
+      if (!emp.sector) emp.sector = "playa";
+
+      // básico puede venir numérico
       if (
         emp.basico !== null &&
         emp.basico !== undefined &&
@@ -126,6 +162,7 @@ export default function EmpleadoEdit({ mode }) {
       ) {
         emp.basico = String(emp.basico);
       }
+
       emp.familiares = Array.isArray(emp.familiares)
         ? emp.familiares.map((f) => ({
             ...emptyFamiliar(),
@@ -133,6 +170,7 @@ export default function EmpleadoEdit({ mode }) {
             part_mat_nac: f.part_mat_nac ? 1 : 0,
           }))
         : [];
+
       setForm(emp);
     } catch (e) {
       console.error(e);
@@ -141,24 +179,6 @@ export default function EmpleadoEdit({ mode }) {
       setLoading(false);
     }
   }
-
-  useEffect(() => {
-    let alive = true;
-    (async () => {
-      try {
-        const items = await getPuestosCatalogo();
-        if (!alive) return;
-        setPuestosCatalogo(Array.isArray(items) ? items : []);
-      } catch {
-        // catálogo opcional (fallback: input libre)
-        if (!alive) return;
-        setPuestosCatalogo([]);
-      }
-    })();
-    return () => {
-      alive = false;
-    };
-  }, []);
 
   useEffect(() => {
     load();
@@ -200,20 +220,22 @@ export default function EmpleadoEdit({ mode }) {
     return {
       legajo: String(form.legajo || "").trim(),
       nombre: String(form.nombre || "").trim(),
-      sector: String(form.sector || "").trim(),
+      sector: sectorUiToApi(form.sector) || "",
       puesto, // fundamental
-      categoria: categoria || puesto, // compat: si no usan categoría separada, queda igual a puesto
+      categoria: categoria || puesto, // compat: si no usan categoría separada
       fecha_ingreso: String(form.fecha_ingreso || "").trim(),
     };
   }, [form]);
 
   const payloadExtras = useMemo(() => {
+    const puesto = String(form.puesto || "").trim();
+    const categoria = String(form.categoria || "").trim() || puesto;
+
     return {
       nombre: String(form.nombre || "").trim(),
-      sector: String(form.sector || "").trim(),
-      puesto: String(form.puesto || "").trim(),
-      categoria:
-        String(form.categoria || "").trim() || String(form.puesto || "").trim(),
+      sector: sectorUiToApi(form.sector) || "",
+      puesto,
+      categoria,
       activo: Number(form.activo) ? 1 : 0,
 
       // personales
@@ -246,30 +268,27 @@ export default function EmpleadoEdit({ mode }) {
 
   const familiaresPayload = useMemo(() => {
     const fam = Array.isArray(form.familiares) ? form.familiares : [];
-    return (
-      fam
-        .map((f) => ({
-          parentesco: String(f.parentesco || "").trim(),
-          nombre: String(f.nombre || "").trim(),
-          cuil: String(f.cuil || "").trim(),
-          fecha_nac: String(f.fecha_nac || "").trim(),
-          part_mat_nac: f.part_mat_nac ? 1 : 0,
-          tomo: String(f.tomo || "").trim(),
-          acta: String(f.acta || "").trim(),
-          folio: String(f.folio || "").trim(),
-        }))
-        // evitamos guardar filas totalmente vacías
-        .filter(
-          (f) =>
-            f.parentesco ||
-            f.nombre ||
-            f.cuil ||
-            f.fecha_nac ||
-            f.tomo ||
-            f.acta ||
-            f.folio,
-        )
-    );
+    return fam
+      .map((f) => ({
+        parentesco: String(f.parentesco || "").trim(),
+        nombre: String(f.nombre || "").trim(),
+        cuil: String(f.cuil || "").trim(),
+        fecha_nac: String(f.fecha_nac || "").trim(),
+        part_mat_nac: f.part_mat_nac ? 1 : 0,
+        tomo: String(f.tomo || "").trim(),
+        acta: String(f.acta || "").trim(),
+        folio: String(f.folio || "").trim(),
+      }))
+      .filter(
+        (f) =>
+          f.parentesco ||
+          f.nombre ||
+          f.cuil ||
+          f.fecha_nac ||
+          f.tomo ||
+          f.acta ||
+          f.folio,
+      );
   }, [form.familiares]);
 
   function validate() {
@@ -311,6 +330,7 @@ export default function EmpleadoEdit({ mode }) {
   async function onSave() {
     if (!isAdmin) return;
     if (saving) return;
+
     const v = validate();
     if (v) {
       setError(`⚠️ ${v}`);
@@ -325,13 +345,10 @@ export default function EmpleadoEdit({ mode }) {
       const legajo = String(form.legajo || "").trim();
 
       if (isCreate) {
-        // A) create base (compat legacy)
         await createEmpleadoBase(payloadBase);
       }
 
-      // B) extras
       await patchEmpleado(legajo, payloadExtras);
-      // C) familiares
       await replaceFamiliares(legajo, familiaresPayload);
 
       setNotice("✅ Guardado");
@@ -444,7 +461,7 @@ export default function EmpleadoEdit({ mode }) {
         <div className="card" style={{ flex: 1, minWidth: 320 }}>
           <h3 style={{ marginTop: 0, marginBottom: 6 }}>Identificación</h3>
           <div className="muted" style={{ fontSize: 13, marginBottom: 10 }}>
-            Campos base para compatibilidad con legacy.
+            Campos base para compatibilidad.
           </div>
 
           <div className="row" style={{ gap: 12 }}>
@@ -454,6 +471,7 @@ export default function EmpleadoEdit({ mode }) {
                 gridTemplateColumns: "180px minmax(300px,1fr)",
                 gap: 16,
                 alignItems: "end",
+                width: "100%",
               }}
             >
               <Field
@@ -461,19 +479,20 @@ export default function EmpleadoEdit({ mode }) {
                 hint={isCreate ? "obligatorio" : "no editable"}
               >
                 <input
-                  value={form.legajo}
+                  value={form.legajo ?? ""}
                   onChange={(e) => setField("legajo", e.target.value)}
                   disabled={!isCreate || disabled}
                   placeholder="Ej: 123"
+                  style={{ width: "100%" }}
                 />
               </Field>
-            </div>
-            <div style={{ flex: 2, minWidth: 240 }}>
+
               <Field label="Nombre y Apellido" hint="obligatorio">
                 <input
                   value={form.nombre ?? ""}
                   onChange={(e) => setField("nombre", e.target.value)}
                   disabled={disabled}
+                  style={{ width: "100%" }}
                 />
               </Field>
             </div>
@@ -483,8 +502,13 @@ export default function EmpleadoEdit({ mode }) {
             <div style={{ flex: 1, minWidth: 180 }}>
               <Field label="Sector">
                 <select
-                  value={form.sector}
-                  onChange={(e) => setField("sector", e.target.value)}
+                  value={form.sector ?? "playa"}
+                  onChange={(e) => {
+                    setField("sector", e.target.value);
+                    setField("puesto", "");
+                    // opcional:
+                    setField("categoria", "");
+                  }}
                   disabled={disabled}
                 >
                   {SECTORES.map((s) => (
@@ -503,16 +527,18 @@ export default function EmpleadoEdit({ mode }) {
                   onChange={(e) => {
                     const v = e.target.value;
                     setField("puesto", v);
-                    // compat: si categoria sigue existiendo en backend
-                    setField("categoria", v);
+                    setField(
+                      "categoria",
+                      (form.categoria || "").trim() ? form.categoria : v,
+                    );
                   }}
                   disabled={
-                    disabled || puestosLoading || !normalizeSector(form.sector)
+                    disabled || puestosLoading || !sectorUiToApi(form.sector)
                   }
                   style={{ width: "100%" }}
                 >
                   <option value="">
-                    {normalizeSector(form.sector)
+                    {sectorUiToApi(form.sector)
                       ? "Seleccionar puesto..."
                       : "Elegí un sector primero"}
                   </option>
@@ -523,6 +549,19 @@ export default function EmpleadoEdit({ mode }) {
                     </option>
                   ))}
                 </select>
+
+                {puestoSel ? (
+                  <div className="muted" style={{ marginTop: 6, fontSize: 12 }}>
+                    Horarios:{" "}
+                    {[
+                      puestoSel.manana && `Mañana ${puestoSel.manana}`,
+                      puestoSel.tarde && `Tarde ${puestoSel.tarde}`,
+                      puestoSel.noche && `Noche ${puestoSel.noche}`,
+                    ]
+                      .filter(Boolean)
+                      .join(" / ")}
+                  </div>
+                ) : null}
 
                 {puestosError ? (
                   <div style={{ marginTop: 6, fontSize: 12, opacity: 0.8 }}>
@@ -730,7 +769,7 @@ export default function EmpleadoEdit({ mode }) {
                 <div style={{ flex: 1, minWidth: 160 }}>
                   <Field label="Básico" hint="$">
                     <input
-                      value={form.basico}
+                      value={form.basico ?? ""}
                       onChange={(e) => setField("basico", e.target.value)}
                       disabled={disabled}
                       placeholder="0"
@@ -990,8 +1029,8 @@ export default function EmpleadoEdit({ mode }) {
       </div>
 
       <div className="muted" style={{ fontSize: 12, marginTop: 12 }}>
-        Nota: para compatibilidad con legacy, el alta se hace con POST base y
-        luego se completa con PATCH + familiares.
+        Nota: para compatibilidad, el alta se hace con POST base y luego se
+        completa con PATCH + familiares.
       </div>
     </div>
   );
