@@ -172,6 +172,116 @@ input, select {
   border: 1px solid var(--border);
   color: var(--muted);
 }
+/* ====== UI polish (dark) ====== */
+:root{
+  --bg: #0b1220;
+  --panel: rgba(255,255,255,.04);
+  --panel2: rgba(255,255,255,.06);
+  --border: rgba(255,255,255,.10);
+  --text: rgba(255,255,255,.92);
+  --muted: rgba(255,255,255,.65);
+  --muted2: rgba(255,255,255,.45);
+  --focus: rgba(59,130,246,.55);
+}
+
+/* Botones */
+.btn-ui{
+  height: 36px;
+  padding: 0 14px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: rgba(255,255,255,.06);
+  color: var(--text);
+  font-weight: 800;
+  cursor: pointer;
+}
+.btn-ui:hover{ background: rgba(255,255,255,.09); }
+.btn-ui:active{ transform: translateY(1px); }
+.btn-ui:disabled{ opacity: .55; cursor: not-allowed; }
+
+.btn-ui--ghost{
+  background: transparent;
+}
+.btn-ui--primary{
+  border-color: rgba(59,130,246,.35);
+  background: rgba(59,130,246,.14);
+}
+.btn-ui--danger{
+  border-color: rgba(239,68,68,.35);
+  background: rgba(239,68,68,.12);
+}
+
+/* Inputs / selects */
+.input-ui, .select-ui{
+  height: 36px;
+  padding: 0 12px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: rgba(255,255,255,.04);
+  color: var(--text);
+  outline: none;
+}
+.input-ui::placeholder{ color: var(--muted2); }
+.input-ui:focus, .select-ui:focus{
+  border-color: rgba(59,130,246,.45);
+  box-shadow: 0 0 0 3px rgba(59,130,246,.18);
+}
+
+/* Esto mejora muchísimo el dropdown en Chrome/Edge (dark native) */
+.select-ui{
+  color-scheme: dark;
+}
+.select-ui option{
+  background: #0f172a;       /* fondo del dropdown */
+  color: rgba(255,255,255,.92);
+}
+
+/* Modal */
+.modal-ui{
+  border: 1px solid rgba(255,255,255,.12);
+  background: linear-gradient(180deg, rgba(11,18,32,.98), rgba(11,18,32,.92));
+  border-radius: 16px;
+  box-shadow: 0 20px 60px rgba(0,0,0,.55);
+}
+
+/* Sidebar colapsado prolijo (icon-only) */
+.sidebar{
+  background: rgba(255,255,255,.02);
+  border-right: 1px solid rgba(255,255,255,.06);
+}
+.sidebar .nav a{
+  border-radius: 14px;
+  padding: 10px 12px;
+  color: rgba(255,255,255,.72);
+  text-decoration: none;
+}
+.sidebar .nav a:hover{
+  background: rgba(255,255,255,.06);
+}
+.sidebar .nav a.active{
+  background: rgba(59,130,246,.14);
+  border: 1px solid rgba(59,130,246,.22);
+  color: rgba(255,255,255,.92);
+}
+
+/* Icon button look when collapsed */
+.sidebar.is-collapsed .nav a{
+  justify-content: center !important;
+  padding: 10px 0;
+}
+.sidebar.is-collapsed .nav a span:first-child{
+  width: 42px;
+  height: 42px;
+  border-radius: 14px;
+  display: grid;
+  place-items: center;
+  background: rgba(255,255,255,.04);
+  border: 1px solid rgba(255,255,255,.08);
+}
+.sidebar.is-collapsed .nav a.active span:first-child{
+  background: rgba(59,130,246,.14);
+  border-color: rgba(59,130,246,.22);
+}
 
 @media (max-width: 900px) {
   .layout { grid-template-columns: 1fr; }

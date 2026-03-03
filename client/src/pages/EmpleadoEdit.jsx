@@ -20,9 +20,7 @@ const SECTORES = [
 function Field({ label, children, hint }) {
   return (
     <label className="field">
-      <div
-        style={{ display: "flex", justifyContent: "space-between", gap: 12 }}
-      >
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
         <span>{label}</span>
         {hint ? (
           <span className="muted" style={{ fontSize: 12 }}>
@@ -41,25 +39,23 @@ function todayISO() {
 
 // UI -> API
 function sectorUiToApi(s) {
-  const v = String(s || "")
-    .trim()
-    .toLowerCase();
+  const v = String(s || "").trim().toLowerCase();
   if (v === "playa") return "PLAYA";
   if (v === "shop") return "SHOP";
-  const u = String(s || "")
-    .trim()
-    .toUpperCase();
+  const u = String(s || "").trim().toUpperCase();
   if (u === "PLAYA" || u === "SHOP") return u;
+  if (u === "MINI") return "SHOP"; // por las dudas
   return "";
 }
 
 // API -> UI
 function sectorApiToUi(s) {
-  const u = String(s || "")
-    .trim()
-    .toUpperCase();
+  const u = String(s || "").trim().toUpperCase();
   if (u === "PLAYA") return "playa";
   if (u === "SHOP") return "shop";
+  if (u === "MINI") return "shop";
+  const v = String(s || "").trim().toLowerCase();
+  if (v === "playa" || v === "shop") return v;
   return "";
 }
 
@@ -76,9 +72,82 @@ function emptyFamiliar() {
   };
 }
 
+// Normaliza nulls del backend a strings vacíos para inputs controlados
+function normalizeEmpleadoForForm(data) {
+  const raw = data || {};
+  const base = { ...emptyEmpleado(), ...raw };
+
+  // sector: backend -> UI
+  const uiSector = sectorApiToUi(raw.sector);
+  base.sector = uiSector || base.sector || "playa";
+
+  // null => "" en todos los campos simples
+  const keysToEmptyString = [
+    "legajo",
+    "nombre",
+    "categoria",
+    "puesto",
+    "fecha_ingreso",
+    "domicilio",
+    "localidad",
+    "cuil",
+    "dni",
+    "estudios",
+    "estado_civil",
+    "fecha_nacimiento",
+    "telefono_fijo",
+    "telefono_celular",
+    "email",
+    "nacionalidad",
+    "gremio",
+    "obra_social",
+    "lugar_trabajo",
+    "cbu",
+    "banco",
+    "talle_pantalon",
+    "talle_camisa",
+    "numero_botines",
+  ];
+
+  for (const k of keysToEmptyString) {
+    if (base[k] === null || base[k] === undefined) base[k] = "";
+  }
+
+  // booleanos / flags
+  base.activo = Number(raw.activo) ? 1 : 0;
+  base.es_jubilado = Number(raw.es_jubilado) ? 1 : 0;
+
+  // basico puede venir numérico o null
+  if (raw.basico === null || raw.basico === undefined || raw.basico === "") {
+    base.basico = "";
+  } else {
+    base.basico = String(raw.basico);
+  }
+
+  // familiares
+  base.familiares = Array.isArray(raw.familiares)
+    ? raw.familiares.map((f) => ({
+        ...emptyFamiliar(),
+        ...f,
+        parentesco: f?.parentesco ?? "",
+        nombre: f?.nombre ?? "",
+        cuil: f?.cuil ?? "",
+        fecha_nac: f?.fecha_nac ?? "",
+        tomo: f?.tomo ?? "",
+        acta: f?.acta ?? "",
+        folio: f?.folio ?? "",
+        part_mat_nac: Number(f?.part_mat_nac) ? 1 : 0,
+      }))
+    : [];
+
+  return base;
+}
+
 export default function EmpleadoEdit({ mode }) {
   const { user } = useAuth();
   const isAdmin = user?.rol === "ADMIN";
+  const disabled = !isAdmin;
+
   const nav = useNavigate();
   const params = useParams();
   const legajoParam = params.legajo;
@@ -97,6 +166,7 @@ export default function EmpleadoEdit({ mode }) {
   const [puestosLoading, setPuestosLoading] = useState(false);
   const [puestosError, setPuestosError] = useState("");
 
+  // Cargar puestos cuando cambia el sector (OJO: tu api.js no soporta params tipo axios)
   useEffect(() => {
     const apiSector = sectorUiToApi(form.sector);
 
@@ -142,35 +212,14 @@ export default function EmpleadoEdit({ mode }) {
   async function load() {
     if (isCreate) return;
     if (!legajoParam) return;
+
     try {
       setError("");
       setNotice("");
       setLoading(true);
+
       const data = await getEmpleado(legajoParam);
-      const emp = { ...emptyEmpleado(), ...(data || {}) };
-
-      // normalizar sector a valores de UI
-      const uiSector = sectorApiToUi(emp.sector);
-      if (uiSector) emp.sector = uiSector;
-      if (!emp.sector) emp.sector = "playa";
-
-      // básico puede venir numérico
-      if (
-        emp.basico !== null &&
-        emp.basico !== undefined &&
-        emp.basico !== ""
-      ) {
-        emp.basico = String(emp.basico);
-      }
-
-      emp.familiares = Array.isArray(emp.familiares)
-        ? emp.familiares.map((f) => ({
-            ...emptyFamiliar(),
-            ...f,
-            part_mat_nac: f.part_mat_nac ? 1 : 0,
-          }))
-        : [];
-
+      const emp = normalizeEmpleadoForForm(data);
       setForm(emp);
     } catch (e) {
       console.error(e);
@@ -184,8 +233,6 @@ export default function EmpleadoEdit({ mode }) {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [legajoParam, isCreate]);
-
-  const disabled = !isAdmin;
 
   function setField(key, value) {
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -221,8 +268,8 @@ export default function EmpleadoEdit({ mode }) {
       legajo: String(form.legajo || "").trim(),
       nombre: String(form.nombre || "").trim(),
       sector: sectorUiToApi(form.sector) || "",
-      puesto, // fundamental
-      categoria: categoria || puesto, // compat: si no usan categoría separada
+      puesto,
+      categoria: categoria || puesto,
       fecha_ingreso: String(form.fecha_ingreso || "").trim(),
     };
   }, [form]);
@@ -252,7 +299,7 @@ export default function EmpleadoEdit({ mode }) {
       nacionalidad: String(form.nacionalidad || "").trim(),
       gremio: String(form.gremio || "").trim(),
       basico: normalizeBasicoToNumber(form.basico),
-      es_jubilado: form.es_jubilado ? 1 : 0,
+      es_jubilado: Number(form.es_jubilado) ? 1 : 0,
 
       // laborales
       fecha_ingreso: String(form.fecha_ingreso || "").trim(),
@@ -274,7 +321,7 @@ export default function EmpleadoEdit({ mode }) {
         nombre: String(f.nombre || "").trim(),
         cuil: String(f.cuil || "").trim(),
         fecha_nac: String(f.fecha_nac || "").trim(),
-        part_mat_nac: f.part_mat_nac ? 1 : 0,
+        part_mat_nac: Number(f.part_mat_nac) ? 1 : 0,
         tomo: String(f.tomo || "").trim(),
         acta: String(f.acta || "").trim(),
         folio: String(f.folio || "").trim(),
@@ -287,7 +334,7 @@ export default function EmpleadoEdit({ mode }) {
           f.fecha_nac ||
           f.tomo ||
           f.acta ||
-          f.folio,
+          f.folio
       );
   }, [form.familiares]);
 
@@ -316,13 +363,7 @@ export default function EmpleadoEdit({ mode }) {
       return "CBU inválido (debe tener 22 dígitos)";
 
     const bas = normalizeBasicoToNumber(form.basico);
-    if (
-      form.basico !== "" &&
-      form.basico !== null &&
-      form.basico !== undefined &&
-      bas === null
-    )
-      return "Básico inválido";
+    if (form.basico !== "" && bas === null) return "Básico inválido";
 
     return "";
   }
@@ -386,8 +427,7 @@ export default function EmpleadoEdit({ mode }) {
         <div>
           <h2 style={{ marginTop: 0, marginBottom: 6 }}>{title}</h2>
           <div className="muted" style={{ fontSize: 13 }}>
-            Ficha completa (planilla ingreso): personales, laborales y
-            familiares.
+            Ficha completa: personales, laborales y familiares.
           </div>
         </div>
         <div
@@ -461,7 +501,7 @@ export default function EmpleadoEdit({ mode }) {
         <div className="card" style={{ flex: 1, minWidth: 320 }}>
           <h3 style={{ marginTop: 0, marginBottom: 6 }}>Identificación</h3>
           <div className="muted" style={{ fontSize: 13, marginBottom: 10 }}>
-            Campos base para compatibilidad.
+            Campos base del empleado.
           </div>
 
           <div className="row" style={{ gap: 12 }}>
@@ -474,10 +514,7 @@ export default function EmpleadoEdit({ mode }) {
                 width: "100%",
               }}
             >
-              <Field
-                label="Legajo"
-                hint={isCreate ? "obligatorio" : "no editable"}
-              >
+              <Field label="Legajo" hint={isCreate ? "obligatorio" : "no editable"}>
                 <input
                   value={form.legajo ?? ""}
                   onChange={(e) => setField("legajo", e.target.value)}
@@ -506,7 +543,6 @@ export default function EmpleadoEdit({ mode }) {
                   onChange={(e) => {
                     setField("sector", e.target.value);
                     setField("puesto", "");
-                    // opcional:
                     setField("categoria", "");
                   }}
                   disabled={disabled}
@@ -527,20 +563,13 @@ export default function EmpleadoEdit({ mode }) {
                   onChange={(e) => {
                     const v = e.target.value;
                     setField("puesto", v);
-                    setField(
-                      "categoria",
-                      (form.categoria || "").trim() ? form.categoria : v,
-                    );
+                    setField("categoria", (form.categoria || "").trim() ? form.categoria : v);
                   }}
-                  disabled={
-                    disabled || puestosLoading || !sectorUiToApi(form.sector)
-                  }
+                  disabled={disabled || puestosLoading || !sectorUiToApi(form.sector)}
                   style={{ width: "100%" }}
                 >
                   <option value="">
-                    {sectorUiToApi(form.sector)
-                      ? "Seleccionar puesto..."
-                      : "Elegí un sector primero"}
+                    {sectorUiToApi(form.sector) ? "Seleccionar puesto..." : "Elegí un sector primero"}
                   </option>
 
                   {puestosItems.map((p) => (
@@ -554,9 +583,9 @@ export default function EmpleadoEdit({ mode }) {
                   <div className="muted" style={{ marginTop: 6, fontSize: 12 }}>
                     Horarios:{" "}
                     {[
-                      puestoSel.manana && `Mañana ${puestoSel.manana}`,
-                      puestoSel.tarde && `Tarde ${puestoSel.tarde}`,
-                      puestoSel.noche && `Noche ${puestoSel.noche}`,
+                      puestoSel.manana ? `Mañana ${puestoSel.manana}` : null,
+                      puestoSel.tarde ? `Tarde ${puestoSel.tarde}` : null,
+                      puestoSel.noche ? `Noche ${puestoSel.noche}` : null,
                     ]
                       .filter(Boolean)
                       .join(" / ")}
@@ -583,10 +612,7 @@ export default function EmpleadoEdit({ mode }) {
             </div>
 
             <div style={{ flex: 1, minWidth: 200 }}>
-              <Field
-                label="Fecha de ingreso"
-                hint={isCreate ? "recomendado" : ""}
-              >
+              <Field label="Fecha de ingreso" hint={isCreate ? "recomendado" : ""}>
                 <input
                   type="date"
                   value={form.fecha_ingreso || ""}
@@ -598,14 +624,7 @@ export default function EmpleadoEdit({ mode }) {
             </div>
           </div>
 
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 10,
-              marginTop: 6,
-            }}
-          >
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 6 }}>
             <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <input
                 type="checkbox"
@@ -620,9 +639,7 @@ export default function EmpleadoEdit({ mode }) {
               <input
                 type="checkbox"
                 checked={!!Number(form.es_jubilado)}
-                onChange={(e) =>
-                  setField("es_jubilado", e.target.checked ? 1 : 0)
-                }
+                onChange={(e) => setField("es_jubilado", e.target.checked ? 1 : 0)}
                 disabled={disabled}
               />
               <span>Es jubilado</span>
@@ -634,9 +651,7 @@ export default function EmpleadoEdit({ mode }) {
         <div className="card" style={{ flex: 2, minWidth: 340 }}>
           {tab === "personales" ? (
             <>
-              <h3 style={{ marginTop: 0, marginBottom: 6 }}>
-                Datos personales
-              </h3>
+              <h3 style={{ marginTop: 0, marginBottom: 6 }}>Datos personales</h3>
 
               <div className="row" style={{ gap: 12 }}>
                 <div style={{ flex: 1, minWidth: 200 }}>
@@ -662,9 +677,7 @@ export default function EmpleadoEdit({ mode }) {
                     <input
                       type="date"
                       value={form.fecha_nacimiento || ""}
-                      onChange={(e) =>
-                        setField("fecha_nacimiento", e.target.value)
-                      }
+                      onChange={(e) => setField("fecha_nacimiento", e.target.value)}
                       disabled={disabled}
                       max={todayISO()}
                     />
@@ -727,9 +740,7 @@ export default function EmpleadoEdit({ mode }) {
                   <Field label="Teléfono fijo">
                     <input
                       value={form.telefono_fijo ?? ""}
-                      onChange={(e) =>
-                        setField("telefono_fijo", e.target.value)
-                      }
+                      onChange={(e) => setField("telefono_fijo", e.target.value)}
                       disabled={disabled}
                     />
                   </Field>
@@ -738,9 +749,7 @@ export default function EmpleadoEdit({ mode }) {
                   <Field label="Teléfono celular">
                     <input
                       value={form.telefono_celular ?? ""}
-                      onChange={(e) =>
-                        setField("telefono_celular", e.target.value)
-                      }
+                      onChange={(e) => setField("telefono_celular", e.target.value)}
                       disabled={disabled}
                     />
                   </Field>
@@ -795,10 +804,7 @@ export default function EmpleadoEdit({ mode }) {
 
               <div className="row" style={{ gap: 12 }}>
                 <div style={{ flex: 2, minWidth: 260 }}>
-                  <Field
-                    label="Obra social"
-                    hint="si tenía una anterior, detallar"
-                  >
+                  <Field label="Obra social" hint="si tenía una anterior, detallar">
                     <input
                       value={form.obra_social ?? ""}
                       onChange={(e) => setField("obra_social", e.target.value)}
@@ -832,9 +838,7 @@ export default function EmpleadoEdit({ mode }) {
                   <Field label="Talle pantalón">
                     <input
                       value={form.talle_pantalon ?? ""}
-                      onChange={(e) =>
-                        setField("talle_pantalon", e.target.value)
-                      }
+                      onChange={(e) => setField("talle_pantalon", e.target.value)}
                       disabled={disabled}
                     />
                   </Field>
@@ -852,9 +856,7 @@ export default function EmpleadoEdit({ mode }) {
                   <Field label="Número botines">
                     <input
                       value={form.numero_botines ?? ""}
-                      onChange={(e) =>
-                        setField("numero_botines", e.target.value)
-                      }
+                      onChange={(e) => setField("numero_botines", e.target.value)}
                       disabled={disabled}
                     />
                   </Field>
@@ -875,20 +877,13 @@ export default function EmpleadoEdit({ mode }) {
                 }}
               >
                 <div>
-                  <h3 style={{ marginTop: 0, marginBottom: 6 }}>
-                    Datos familiares
-                  </h3>
+                  <h3 style={{ marginTop: 0, marginBottom: 6 }}>Datos familiares</h3>
                   <div className="muted" style={{ fontSize: 13 }}>
-                    Parentesco, CUIL, fecha nac y documentación
-                    (tomo/acta/folio).
+                    Parentesco, CUIL, fecha nac y documentación (tomo/acta/folio).
                   </div>
                 </div>
                 {isAdmin ? (
-                  <button
-                    className="btn"
-                    onClick={addFamiliar}
-                    disabled={disabled}
-                  >
+                  <button className="btn" onClick={addFamiliar} disabled={disabled}>
                     + Agregar familiar
                   </button>
                 ) : null}
@@ -915,9 +910,7 @@ export default function EmpleadoEdit({ mode }) {
                         <td>
                           <input
                             value={f.parentesco || ""}
-                            onChange={(e) =>
-                              setFamiliar(idx, "parentesco", e.target.value)
-                            }
+                            onChange={(e) => setFamiliar(idx, "parentesco", e.target.value)}
                             disabled={disabled}
                             style={{ width: 140 }}
                           />
@@ -925,9 +918,7 @@ export default function EmpleadoEdit({ mode }) {
                         <td>
                           <input
                             value={f.nombre || ""}
-                            onChange={(e) =>
-                              setFamiliar(idx, "nombre", e.target.value)
-                            }
+                            onChange={(e) => setFamiliar(idx, "nombre", e.target.value)}
                             disabled={disabled}
                             style={{ width: 240 }}
                           />
@@ -935,9 +926,7 @@ export default function EmpleadoEdit({ mode }) {
                         <td>
                           <input
                             value={f.cuil || ""}
-                            onChange={(e) =>
-                              setFamiliar(idx, "cuil", e.target.value)
-                            }
+                            onChange={(e) => setFamiliar(idx, "cuil", e.target.value)}
                             disabled={disabled}
                             style={{ width: 170 }}
                           />
@@ -946,9 +935,7 @@ export default function EmpleadoEdit({ mode }) {
                           <input
                             type="date"
                             value={f.fecha_nac || ""}
-                            onChange={(e) =>
-                              setFamiliar(idx, "fecha_nac", e.target.value)
-                            }
+                            onChange={(e) => setFamiliar(idx, "fecha_nac", e.target.value)}
                             disabled={disabled}
                             max={todayISO()}
                             style={{ width: 150 }}
@@ -958,11 +945,7 @@ export default function EmpleadoEdit({ mode }) {
                           <select
                             value={Number(f.part_mat_nac) ? "1" : "0"}
                             onChange={(e) =>
-                              setFamiliar(
-                                idx,
-                                "part_mat_nac",
-                                e.target.value === "1" ? 1 : 0,
-                              )
+                              setFamiliar(idx, "part_mat_nac", e.target.value === "1" ? 1 : 0)
                             }
                             disabled={disabled}
                             style={{ width: 110 }}
@@ -974,9 +957,7 @@ export default function EmpleadoEdit({ mode }) {
                         <td>
                           <input
                             value={f.tomo || ""}
-                            onChange={(e) =>
-                              setFamiliar(idx, "tomo", e.target.value)
-                            }
+                            onChange={(e) => setFamiliar(idx, "tomo", e.target.value)}
                             disabled={disabled}
                             style={{ width: 90 }}
                           />
@@ -984,9 +965,7 @@ export default function EmpleadoEdit({ mode }) {
                         <td>
                           <input
                             value={f.acta || ""}
-                            onChange={(e) =>
-                              setFamiliar(idx, "acta", e.target.value)
-                            }
+                            onChange={(e) => setFamiliar(idx, "acta", e.target.value)}
                             disabled={disabled}
                             style={{ width: 90 }}
                           />
@@ -994,20 +973,14 @@ export default function EmpleadoEdit({ mode }) {
                         <td>
                           <input
                             value={f.folio || ""}
-                            onChange={(e) =>
-                              setFamiliar(idx, "folio", e.target.value)
-                            }
+                            onChange={(e) => setFamiliar(idx, "folio", e.target.value)}
                             disabled={disabled}
                             style={{ width: 90 }}
                           />
                         </td>
                         <td>
                           {isAdmin ? (
-                            <button
-                              className="btn danger"
-                              onClick={() => removeFamiliar(idx)}
-                              disabled={disabled}
-                            >
+                            <button className="btn danger" onClick={() => removeFamiliar(idx)} disabled={disabled}>
                               Quitar
                             </button>
                           ) : null}
@@ -1029,8 +1002,7 @@ export default function EmpleadoEdit({ mode }) {
       </div>
 
       <div className="muted" style={{ fontSize: 12, marginTop: 12 }}>
-        Nota: para compatibilidad, el alta se hace con POST base y luego se
-        completa con PATCH + familiares.
+        Nota: el alta se hace con POST base y luego se completa con PATCH + familiares.
       </div>
     </div>
   );

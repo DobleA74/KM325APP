@@ -7,8 +7,9 @@ const TOKEN_KEY = "km325_token";
 
 export function hasRole(user, roles) {
   if (!roles || roles.length === 0) return true;
-  if (!user?.role) return false;
-  return roles.includes(user.role);
+  const r = user?.rol || user?.role; // soporta ambos
+  if (!r) return false;
+  return roles.includes(r);
 }
 
 export function AuthProvider({ children }) {
@@ -16,15 +17,16 @@ export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
 
   async function refreshMe() {
-    try {
-      const me = await api.get("/api/auth/me");
-      setUser(me);
-    } catch {
-      setUser(null);
-    } finally {
-      setReady(true);
-    }
+  try {
+    const me = await api.get("/api/auth/me");
+    // backend puede devolver { user: {...} } o directamente {...}
+    setUser(me?.user ?? me ?? null);
+  } catch {
+    setUser(null);
+  } finally {
+    setReady(true);
   }
+}
 
   useEffect(() => {
     refreshMe();
